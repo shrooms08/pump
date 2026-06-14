@@ -1,0 +1,512 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: #0a0e14;
+  --panel: #121826;
+  --up: #19c37d;
+  --down: #f6465d;
+  --text: #e6edf3;
+  --muted: #8b98a9;
+  --accent: #ffd23f;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.wrap {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px;
+}
+
+.title {
+  font-size: 40px;
+  letter-spacing: 2px;
+  font-weight: 800;
+}
+
+.title .pump {
+  color: var(--up);
+}
+
+.subtitle {
+  color: var(--muted);
+  max-width: 560px;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.stage {
+  position: relative;
+  width: 900px;
+  max-width: 96vw;
+  aspect-ratio: 900 / 600;
+  border: 1px solid #1e2a3c;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  padding: 14px 18px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 15px;
+}
+
+.hud .col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hud .col.right {
+  align-items: flex-end;
+}
+
+.hud .label {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.hud .value {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.pnl-up {
+  color: var(--up);
+}
+.pnl-down {
+  color: var(--down);
+}
+.mult {
+  color: var(--accent);
+}
+
+/* position / trade panel */
+.position {
+  position: absolute;
+  left: 14px;
+  top: 64px;
+  width: 184px;
+  pointer-events: none;
+  background: rgba(13, 19, 30, 0.82);
+  border: 1px solid #1e2a3c;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  backdrop-filter: blur(4px);
+}
+
+.pos-tag {
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  display: inline-block;
+  font-size: 12px;
+}
+.pos-tag.long {
+  background: rgba(25, 195, 125, 0.15);
+  color: var(--up);
+}
+.pos-tag.short {
+  background: rgba(246, 70, 93, 0.15);
+  color: var(--down);
+}
+
+.pos-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  color: var(--muted);
+}
+.pos-row b {
+  color: var(--text);
+}
+
+.pos-pnl {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #1e2a3c;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: rgba(6, 9, 14, 0.78);
+  text-align: center;
+}
+
+/* trade receipt (settlement) */
+.receipt {
+  width: 320px;
+  background: var(--panel);
+  border: 1px solid #243246;
+  border-radius: 14px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+}
+.receipt-head {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 800;
+  letter-spacing: 1px;
+  font-size: 12px;
+  color: var(--muted);
+  padding-bottom: 6px;
+}
+.r-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  color: var(--muted);
+}
+.r-row b {
+  color: var(--text);
+}
+.r-row .muted {
+  color: var(--muted);
+  font-weight: 400;
+}
+.r-divider {
+  height: 1px;
+  background: #243246;
+  margin: 4px 0;
+}
+.r-row.net {
+  font-size: 20px;
+  font-weight: 800;
+}
+.r-row.net span {
+  color: var(--text);
+}
+.receipt .btn {
+  margin-top: 10px;
+}
+
+.btn {
+  pointer-events: auto;
+  cursor: pointer;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 22px;
+  font-size: 16px;
+  font-weight: 700;
+  font-family: inherit;
+  background: var(--up);
+  color: #04110a;
+}
+
+.btn.short {
+  background: var(--down);
+  color: #1a0407;
+}
+
+.btn.ghost {
+  background: #1e2a3c;
+  color: var(--text);
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.big {
+  font-size: 32px;
+  font-weight: 800;
+}
+
+/* ── trade-first entry UI (Step 6a) ───────────────────────────────────────── */
+.topbar {
+  width: 100%;
+  max-width: 460px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.topbar .title {
+  font-size: 28px;
+}
+
+.wallet-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.wallet-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.25;
+}
+.wallet-meta .addr {
+  font-size: 12px;
+  color: var(--muted);
+}
+.wallet-meta .bal {
+  font-size: 14px;
+  font-weight: 700;
+}
+.wallet-meta .net {
+  margin-left: 6px;
+  font-size: 10px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* shrink + theme the wallet-adapter button to fit the dark UI */
+.wallet-adapter-button {
+  background: #1e2a3c !important;
+  height: 38px !important;
+  font-size: 13px !important;
+  font-family: inherit !important;
+  border-radius: 9px !important;
+}
+.wallet-adapter-button-trigger {
+  background: #1e2a3c !important;
+}
+
+.trade-card {
+  width: 100%;
+  max-width: 460px;
+  background: var(--panel);
+  border: 1px solid #1e2a3c;
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.trade-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.trade-head .market {
+  font-size: 22px;
+  font-weight: 800;
+}
+.trade-head .mark {
+  text-align: right;
+}
+.trade-head .mark .value {
+  font-size: 20px;
+  font-weight: 700;
+}
+.muted {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 13px;
+}
+
+.seg {
+  display: flex;
+  gap: 8px;
+}
+.seg.small {
+  flex: 0 0 auto;
+}
+.seg-btn {
+  flex: 1;
+  cursor: pointer;
+  border: 1px solid #243246;
+  background: #0d1320;
+  color: var(--muted);
+  border-radius: 9px;
+  padding: 10px 14px;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 14px;
+}
+.seg.small .seg-btn {
+  padding: 10px 12px;
+}
+.seg-btn.on {
+  color: var(--text);
+  border-color: #3a4d68;
+}
+.seg-btn.long.on {
+  background: rgba(25, 195, 125, 0.16);
+  border-color: var(--up);
+  color: var(--up);
+}
+.seg-btn.short.on {
+  background: rgba(246, 70, 93, 0.16);
+  border-color: var(--down);
+  color: var(--down);
+}
+.seg-btn.on:not(.long):not(.short) {
+  background: #1e2a3c;
+  border-color: #3a4d68;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.stake-row {
+  display: flex;
+  gap: 8px;
+}
+.trade-card input[type="number"] {
+  flex: 1;
+  background: #0d1320;
+  border: 1px solid #243246;
+  border-radius: 9px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  padding: 10px 12px;
+}
+.trade-card input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.btn.open {
+  width: 100%;
+  padding: 14px;
+  font-size: 16px;
+}
+.btn.open:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn.open.short {
+  background: var(--down);
+  color: #1a0407;
+}
+
+.ctx-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 15px;
+  color: var(--muted);
+  padding: 3px 0;
+}
+.ctx-row b {
+  color: var(--text);
+}
+.hint.sim {
+  color: var(--accent);
+}
+
+/* ── real-mode toggle + confirmation (Step 6c) ────────────────────────────── */
+.real-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid #2a2030;
+  background: rgba(246, 70, 93, 0.06);
+  border-radius: 9px;
+  padding: 10px 12px;
+}
+.real-toggle input {
+  margin-top: 2px;
+  accent-color: var(--down);
+}
+
+.btn.open.real {
+  background: var(--down);
+  color: #1a0407;
+}
+
+.confirm-real {
+  width: 340px;
+  background: var(--panel);
+  border: 1px solid var(--down);
+  border-radius: 14px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+.real-banner {
+  background: var(--down);
+  color: #1a0407;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-align: center;
+  border-radius: 8px;
+  padding: 7px;
+  font-size: 13px;
+}
+.confirm-title {
+  font-size: 18px;
+  font-weight: 800;
+  margin-top: 2px;
+}
+.confirm-real .r-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  color: var(--muted);
+}
+.confirm-real .r-row b {
+  color: var(--text);
+}
+.caps-note {
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px solid #243246;
+  padding-top: 8px;
+  margin-top: 2px;
+}
+.confirm-real .row {
+  margin-top: 6px;
+}
+.confirm-real .row .btn {
+  flex: 1;
+}

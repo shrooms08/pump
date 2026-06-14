@@ -1,0 +1,22 @@
+{
+  "name": "@pump/price-relay",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Price relay → Redis. MVP emits a mocked SOL random walk; Step 5 swaps in the FlashTrade WS with the same publish interface.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@pump/shared": "workspace:*",
+    "dotenv": "^16.4.5",
+    "redis": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4"
+  }
+}

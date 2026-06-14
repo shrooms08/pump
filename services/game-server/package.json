@@ -1,0 +1,26 @@
+{
+  "name": "@pump/game-server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Authoritative WS game loop. MVP drives bird altitude from a mocked price via Redis; ER writes are stubbed until Step 7.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "0.32.1",
+    "@magicblock-labs/ephemeral-rollups-sdk": "0.14.3",
+    "@pump/shared": "workspace:*",
+    "dotenv": "^16.4.5",
+    "redis": "^4.7.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "@types/ws": "^8.5.12",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "pump",
+  "version": "0.0.0",
+  "private": true,
+  "description": "PUMP — Flappy Bird where the bird's altitude is your live FlashTrade perp PnL, scored in a MagicBlock Ephemeral Rollup.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "build": "pnpm -r --if-present run build",
+    "er-smoke": "tsx scripts/er-smoke.ts",
+    "redis": "docker run --rm -p 6379:6379 --name pump-redis redis:7-alpine",
+    "dev:relay": "pnpm --filter @pump/price-relay dev",
+    "dev:server": "pnpm --filter @pump/game-server dev",
+    "dev:app": "pnpm --filter @pump/app dev",
+    "dev": "concurrently -n relay,server,app -c magenta,cyan,green \"pnpm dev:relay\" \"pnpm dev:server\" \"pnpm dev:app\""
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "0.32.1",
+    "@magicblock-labs/ephemeral-rollups-sdk": "0.14.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "concurrently": "^9.0.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}

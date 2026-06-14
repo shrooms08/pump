@@ -1,0 +1,38 @@
+node_modules/
+dist/
+.next/
+.next
+out/
+build/
+coverage/
+*.tsbuildinfo
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# keypairs / wallets — NEVER commit (defense in depth; target/ also ignored)
+*-keypair.json
+*.keypair.json
+keypair*.json
+wallet*.json
+id.json
+*.pem
+
+# anchor / solana
+programs/**/target/
+target/
+test-ledger/
+.anchor/
+
+# local agent/editor config (not project code)
+.claude/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# os
+.DS_Store
