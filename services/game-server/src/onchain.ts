@@ -130,11 +130,6 @@ interface SessionAuth {
 }
 const sessionAuths = new Map<string, SessionAuth>();
 
-// DIAGNOSTIC (wrong-wallet race): records which signer each run locked in at
-// erStartRun time, so markSessionReady can tell whether the run already started
-// (server-fallback) before the session-ready confirmation landed.
-const runSignerLog = new Map<string, { useSession: boolean; at: number }>();
-
 const short = (id: string) => id.slice(0, 8);
 
 /**
@@ -202,17 +197,6 @@ export async function prepareSession(
 export async function markSessionReady(runId: string): Promise<boolean> {
   const auth = sessionAuths.get(runId);
   if (!auth) return false;
-  // (a)+(c) RACE PROBE: did erStartRun already pick a signer before this landed?
-  const started = runSignerLog.get(runId);
-  if (started) {
-    console.log(
-      `[race] ${short(runId)} session-ready @${Date.now()} — run ALREADY STARTED ` +
-        `${started.useSession ? "with SESSION" : "SERVER-FALLBACK"} ${Date.now() - started.at}ms earlier ` +
-        `${started.useSession ? "" : "→ TOO LATE: run is locked to the server key (player will be the server)"}`,
-    );
-  } else {
-    console.log(`[race] ${short(runId)} session-ready @${Date.now()} — run NOT started yet (good: erStartRun will use the session)`);
-  }
   try {
     const c = getCtx();
     const info = await c.baseConn.getAccountInfo(auth.tokenPda, "confirmed");
@@ -360,13 +344,6 @@ export function erStartRun(run: RunState): void {
       session.sessionToken = sessionToken;
       session.er = progs.er;
       session.runPDA = runPDA;
-
-      // (b) which signer this run locked in, after the race resolved.
-      runSignerLog.set(run.id, { useSession, at: Date.now() });
-      console.log(
-        `[race] ${short(run.id)} erStartRun decided @${Date.now()}: sessionAuth=${!!auth} ` +
-          `→ ${useSession ? `SESSION (player=${player.toBase58().slice(0, 8)})` : `SERVER-FALLBACK (player=server ${c.serverKp.publicKey.toBase58().slice(0, 8)})`}`,
-      );
 
       try {
         await progs.base.methods
