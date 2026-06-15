@@ -59,7 +59,7 @@ export function Terminal(props: {
           <span className="pump">PUMP</span> ▲
         </div>
         <MarketHeader realMode={props.realMode} />
-        <WalletBar />
+        <WalletBar realMode={props.realMode} />
       </header>
 
       <div className="terminal-main">
