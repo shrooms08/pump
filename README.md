@@ -10,6 +10,12 @@ The whole surface is rendered as a hand-drawn notebook / trader's-desk page.
 Built for Solana Blitz v5 (theme: trading; uses MagicBlock; integrates
 FlashTrade). **Devnet.**
 
+## Demo
+
+[![Watch the PUMP demo](https://img.youtube.com/vi/IE1F1S0v2FI/hqdefault.jpg)](https://youtu.be/IE1F1S0v2FI)
+
+▶ **[Watch the demo video](https://youtu.be/IE1F1S0v2FI)**
+
 Solana program: [`Ev2NEthdMuGpiCQHUMqRuzZsagYcvF3xbk58zedxVzeF`](https://explorer.solana.com/address/Ev2NEthdMuGpiCQHUMqRuzZsagYcvF3xbk58zedxVzeF?cluster=devnet)
 
 ---
