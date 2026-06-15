@@ -52,11 +52,23 @@ let ctx: {
 
 function getCtx() {
   if (ctx) return ctx;
+  // IDL is committed inside this package (services/game-server/idl/pump.json) so it
+  // ships on a fresh clone / cloud deploy — `target/` is gitignored, so the old
+  // ../../../target/idl path is absent off the build machine.
   const idl = JSON.parse(
-    readFileSync(new URL("../../../target/idl/pump.json", import.meta.url), "utf8"),
+    readFileSync(new URL("../idl/pump.json", import.meta.url), "utf8"),
   ) as anchor.Idl;
-  const kpPath = (process.env.KEYPAIR_PATH || `${homedir()}/.config/solana/id.json`).replace(/^~/, homedir());
-  const secret = Uint8Array.from(JSON.parse(readFileSync(kpPath, "utf8")) as number[]);
+  // Server signer: prefer SERVER_KEYPAIR_B64 (a base64 of the keypair JSON array —
+  // for cloud deploys with no filesystem key). Falls back to the local keypair
+  // file (KEYPAIR_PATH or ~/.config/solana/id.json) so local dev is unchanged.
+  let secret: Uint8Array;
+  const kpB64 = process.env.SERVER_KEYPAIR_B64;
+  if (kpB64) {
+    secret = Uint8Array.from(JSON.parse(Buffer.from(kpB64, "base64").toString("utf8")) as number[]);
+  } else {
+    const kpPath = (process.env.KEYPAIR_PATH || `${homedir()}/.config/solana/id.json`).replace(/^~/, homedir());
+    secret = Uint8Array.from(JSON.parse(readFileSync(kpPath, "utf8")) as number[]);
+  }
   const serverKp = web3.Keypair.fromSecretKey(secret);
   const wallet = new anchor.Wallet(serverKp);
   // Two-chain routing, exactly as er-smoke.ts: base devnet for setup, ER for trades.

@@ -17,6 +17,7 @@ coverage/
 *.keypair.json
 keypair*.json
 wallet*.json
+*signer*.json
 id.json
 *.pem
 

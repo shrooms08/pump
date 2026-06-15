@@ -1,0 +1,683 @@
+{
+  "address": "Ev2NEthdMuGpiCQHUMqRuzZsagYcvF3xbk58zedxVzeF",
+  "metadata": {
+    "name": "pump",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "PUMP — RunSession + settlement (Solana Blitz v5)"
+  },
+  "instructions": [
+    {
+      "name": "apply_event",
+      "docs": [
+        "Runs INSIDE the ER. The authoritative server signs this on each",
+        "meaningful event (coin / hazard clear / milestone), then commits the",
+        "new state up to the base layer.",
+        "",
+        "Enforces the invariants so even a compromised server cannot write an",
+        "impossible score: monotonic tick, bounded per-event points, and a",
+        "multiplier clamped to [MULT_MIN_BPS, MULT_MAX_BPS].",
+        "",
+        "Commit pattern copied verbatim from anchor-counter's `increment_and_commit`.",
+        "Guarded: only the run's player (or its authorized session key) may write."
+      ],
+      "discriminator": [
+        159,
+        148,
+        107,
+        63,
+        46,
+        188,
+        166,
+        170
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "run",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  117,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "run.player",
+                "account": "RunSession"
+              },
+              {
+                "kind": "account",
+                "path": "run.seed",
+                "account": "RunSession"
+              }
+            ]
+          }
+        },
+        {
+          "name": "session_token",
+          "optional": true
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "tick",
+          "type": "u32"
+        },
+        {
+          "name": "points",
+          "type": "u64"
+        },
+        {
+          "name": "mult_delta",
+          "type": "i32"
+        }
+      ]
+    },
+    {
+      "name": "delegate_run",
+      "docs": [
+        "Delegate the RunSession PDA to the Ephemeral Rollup so the authoritative",
+        "server can write score deltas gaslessly during the run. Base layer.",
+        "",
+        "Body mirrors session-keys' `delegate`: read the stored `player` out of the",
+        "raw account data BEFORE the CPI (UncheckedAccount avoids Anchor",
+        "re-serializing stale data after ownership transfers to the delegation",
+        "program), session-or-owner auth, then delegate with seeds keyed by the",
+        "PLAYER (not the payer) so the PDA matches the one start_run created."
+      ],
+      "discriminator": [
+        20,
+        67,
+        38,
+        40,
+        32,
+        211,
+        235,
+        131
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "buffer_run",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  102,
+                  102,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "run"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                206,
+                189,
+                65,
+                247,
+                232,
+                18,
+                200,
+                125,
+                115,
+                230,
+                126,
+                11,
+                111,
+                117,
+                79,
+                244,
+                177,
+                115,
+                128,
+                113,
+                187,
+                0,
+                51,
+                13,
+                181,
+                204,
+                76,
+                165,
+                54,
+                85,
+                99,
+                132
+              ]
+            }
+          }
+        },
+        {
+          "name": "delegation_record_run",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "run"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "delegation_metadata_run",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  108,
+                  101,
+                  103,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110,
+                  45,
+                  109,
+                  101,
+                  116,
+                  97,
+                  100,
+                  97,
+                  116,
+                  97
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "run"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "delegation_program"
+            }
+          }
+        },
+        {
+          "name": "run",
+          "docs": [
+            "PDA seeds in the delegate CPI. UncheckedAccount avoids Anchor",
+            "re-serializing stale data after ownership transfers to the delegation program."
+          ],
+          "writable": true
+        },
+        {
+          "name": "session_token",
+          "optional": true
+        },
+        {
+          "name": "owner_program",
+          "address": "Ev2NEthdMuGpiCQHUMqRuzZsagYcvF3xbk58zedxVzeF"
+        },
+        {
+          "name": "delegation_program",
+          "address": "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "seed",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "end_run",
+      "docs": [
+        "Runs INSIDE the ER. Final state write, then commit + undelegate so the",
+        "base layer holds a finalized score for settlement. Active -> Dead.",
+        "",
+        "RECONCILIATION (write-path fix): `apply_event` writes are best-effort live",
+        "updates fired without blocking on confirmation, so the accumulated on-chain",
+        "score can lag the authoritative server score when a devnet-ER confirmation",
+        "hiccups. end_run therefore SETS the canonical final score/multiplier from",
+        "the server (the authority per CLAUDE.md rule #1) so the finalized",
+        "RunSession the leaderboard reads is always correct — regardless of how many",
+        "individual apply_event confirmations landed. We only ever reconcile UP",
+        "(never below what already landed on-chain) and clamp the multiplier.",
+        "",
+        "Undelegate pattern copied verbatim from anchor-counter's",
+        "`increment_and_undelegate`.",
+        "Guarded: only the run's player (or its authorized session key) may end it."
+      ],
+      "discriminator": [
+        3,
+        68,
+        245,
+        163,
+        207,
+        166,
+        122,
+        189
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "run",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  117,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "run.player",
+                "account": "RunSession"
+              },
+              {
+                "kind": "account",
+                "path": "run.seed",
+                "account": "RunSession"
+              }
+            ]
+          }
+        },
+        {
+          "name": "session_token",
+          "optional": true
+        },
+        {
+          "name": "magic_program",
+          "address": "Magic11111111111111111111111111111111111111"
+        },
+        {
+          "name": "magic_context",
+          "writable": true,
+          "address": "MagicContext1111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "final_score",
+          "type": "u64"
+        },
+        {
+          "name": "final_mult_bps",
+          "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "process_undelegation",
+      "discriminator": [
+        196,
+        28,
+        41,
+        206,
+        48,
+        37,
+        51,
+        167
+      ],
+      "accounts": [
+        {
+          "name": "base_account",
+          "writable": true
+        },
+        {
+          "name": "buffer"
+        },
+        {
+          "name": "payer",
+          "writable": true
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "account_seeds",
+          "type": {
+            "vec": "bytes"
+          }
+        }
+      ]
+    },
+    {
+      "name": "settle",
+      "docs": [
+        "Base layer. Reads the finalized RunSession and pays out.",
+        "Idempotent: only Dead -> Settled, so a retried settle is a no-op error."
+      ],
+      "discriminator": [
+        175,
+        42,
+        185,
+        87,
+        144,
+        131,
+        102,
+        212
+      ],
+      "accounts": [
+        {
+          "name": "run",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  117,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "run.player",
+                "account": "RunSession"
+              },
+              {
+                "kind": "account",
+                "path": "run.seed",
+                "account": "RunSession"
+              }
+            ]
+          }
+        },
+        {
+          "name": "player",
+          "signer": true,
+          "relations": [
+            "run"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "realized_pnl",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "start_run",
+      "docs": [
+        "Create the RunSession PDA for a player and mark it active. Base layer.",
+        "",
+        "`side`: 0 = long/PUMP, 1 = short. The real FlashTrade position (Tier 1)",
+        "or pot stake (Tier 0) is opened off-chain in the same start bundle; this",
+        "instruction only stands up the canonical score record.",
+        "",
+        "Attribution: `player` is the real wallet and need not sign — the session",
+        "key (`payer`) does, authorized by `session_token`. The guard accepts the",
+        "server-signed fallback too (when player == payer, no token needed)."
+      ],
+      "discriminator": [
+        72,
+        212,
+        1,
+        91,
+        61,
+        186,
+        2,
+        52
+      ],
+      "accounts": [
+        {
+          "name": "run",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  117,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "player"
+              },
+              {
+                "kind": "arg",
+                "path": "seed"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "The session key (or, in fallback, the player themselves) — signs and pays rent."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "player",
+          "docs": [
+            "token proves `payer` is authorized to act for it (validated by the guard",
+            "and the #[session] constraints below)."
+          ]
+        },
+        {
+          "name": "session_token",
+          "optional": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "seed",
+          "type": "u64"
+        },
+        {
+          "name": "side",
+          "type": "u8"
+        },
+        {
+          "name": "stake",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "RunSession",
+      "discriminator": [
+        112,
+        45,
+        137,
+        134,
+        225,
+        63,
+        28,
+        131
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "NotActive",
+      "msg": "run not active"
+    },
+    {
+      "code": 6001,
+      "name": "StaleTick",
+      "msg": "stale tick"
+    },
+    {
+      "code": 6002,
+      "name": "PointsTooHigh",
+      "msg": "points too high"
+    },
+    {
+      "code": 6003,
+      "name": "NotSettleable",
+      "msg": "not settleable"
+    },
+    {
+      "code": 6004,
+      "name": "InvalidSide",
+      "msg": "invalid side"
+    }
+  ],
+  "types": [
+    {
+      "name": "RunSession",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "player",
+            "type": "pubkey"
+          },
+          {
+            "name": "seed",
+            "type": "u64"
+          },
+          {
+            "name": "side",
+            "type": "u8"
+          },
+          {
+            "name": "stake",
+            "type": "u64"
+          },
+          {
+            "name": "score",
+            "type": "u64"
+          },
+          {
+            "name": "multiplier_bps",
+            "type": "u32"
+          },
+          {
+            "name": "lives",
+            "type": "u8"
+          },
+          {
+            "name": "last_tick",
+            "type": "u32"
+          },
+          {
+            "name": "status",
+            "type": "u8"
+          },
+          {
+            "name": "payout",
+            "type": "u64"
+          },
+          {
+            "name": "started_at",
+            "type": "i64"
+          },
+          {
+            "name": "ended_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SessionTokenV2",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "target_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "session_signer",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_payer",
+            "type": "pubkey"
+          },
+          {
+            "name": "valid_until",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
+}

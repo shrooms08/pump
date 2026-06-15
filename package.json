@@ -4,6 +4,7 @@
   "private": true,
   "description": "PUMP — Flappy Bird where the bird's altitude is your live FlashTrade perp PnL, scored in a MagicBlock Ephemeral Rollup.",
   "type": "module",
+  "packageManager": "pnpm@10.33.2",
   "engines": {
     "node": ">=20"
   },
