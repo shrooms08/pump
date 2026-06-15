@@ -33,6 +33,11 @@ export function WalletBar({ realMode = false }: { realMode?: boolean }) {
       return;
     }
     let dead = false;
+    // Clear immediately on a network/account switch so a stale value from the
+    // OTHER network can never be shown under the wrong badge (e.g. devnet SOL
+    // lingering under the mainnet label if the mainnet read is slow/blocked).
+    setSol(null);
+    setUsdc(null);
     const conn = realMode ? mainnet : connection;
     const load = async () => {
       try {
