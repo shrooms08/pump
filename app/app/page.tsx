@@ -1,31 +1,31 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useWallet } from "@solana/wallet-adapter-react";
+import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import type { VersionedTransaction } from "@solana/web3.js";
 import { LEVERAGE_X, type TradeSide } from "@pump/shared";
 import { Game } from "../components/Game";
-import { WalletBar } from "../components/wallet-bar";
+import { Terminal } from "../components/terminal/Terminal";
+import type { ClosedResult } from "../components/terminal/PositionsPanel";
+import { RidePrompt } from "../components/terminal/RidePrompt";
+import { RideTransition } from "../components/terminal/RideTransition";
 import { ConfirmRealModal } from "../components/confirm-real-modal";
-import { openPosition, registerRun, tradeLiquidationPrice, type Position, type StakeToken } from "../lib/position";
+import { openPosition, registerRun, authorizeSession, tradeLiquidationPrice, computePnl, type Position, type StakeToken } from "../lib/position";
+import { lastPrice } from "../lib/price-feed";
 import {
   openReal,
   closeReal,
   assertWithinCaps,
   checkBasketReady,
-  BASKET_HINT,
   REAL_MAX_LEVERAGE,
   REAL_MAX_NOTIONAL_USD,
   type RealPositionHandle,
   type BasketStatus,
 } from "../lib/flash-real";
 
-const GAME_HTTP = process.env.NEXT_PUBLIC_GAME_HTTP || "http://localhost:8787";
-
 type Screen =
-  | { kind: "form"; error?: string }
+  | { kind: "terminal"; error?: string }
   | { kind: "opening" }
-  | { kind: "context"; position: Position }
   | { kind: "playing"; position: Position };
 
 type Confirm =
@@ -35,7 +35,19 @@ type Confirm =
 
 export default function Page() {
   const { connected, publicKey, signTransaction } = useWallet();
-  const [screen, setScreen] = useState<Screen>({ kind: "form" });
+  const { connection } = useConnection();
+  const [screen, setScreen] = useState<Screen>({ kind: "terminal" });
+
+  // the one open position (lives in the terminal; closed from the panel, A2)
+  const [position, setPosition] = useState<Position | null>(null);
+  const [closed, setClosed] = useState<ClosedResult | null>(null);
+
+  // A3 "ride the chart" — the confirm prompt, then the zoom transition.
+  const [ridePrompt, setRidePrompt] = useState<{ from: DOMRect } | null>(null);
+  const [ride, setRide] = useState<{ from: DOMRect; position: Position } | null>(null);
+
+  // Bumped when the player returns from a run, to refresh the leaderboard promptly.
+  const [leaderboardKey, setLeaderboardKey] = useState(0);
 
   // trade form state
   const [realMode, setRealMode] = useState(false); // OFF by default — devnet simulated
@@ -79,12 +91,20 @@ export default function Page() {
   const openSimulated = useCallback(async () => {
     setScreen({ kind: "opening" });
     try {
-      const position = await openPosition({ side, stake, stakeToken, leverage });
-      setScreen({ kind: "context", position });
+      const owner = publicKey?.toBase58();
+      const { position: pos, session } = await openPosition({ side, stake, stakeToken, leverage }, owner);
+      setClosed(null);
+      setPosition(pos);
+      setScreen({ kind: "terminal" });
+      // One wallet signature authorizes the run's session key (player attribution).
+      // Best-effort: failure leaves the run on the server-signed fallback.
+      if (session && owner && signTransaction) {
+        void authorizeSession(pos.runId, session, signTransaction, connection);
+      }
     } catch (e) {
-      setScreen({ kind: "form", error: `Couldn't open position: ${(e as Error).message}. Is the game server running?` });
+      setScreen({ kind: "terminal", error: `Couldn't open position: ${(e as Error).message}. Is the game server running?` });
     }
-  }, [side, stake, stakeToken, leverage]);
+  }, [side, stake, stakeToken, leverage, publicKey, signTransaction, connection]);
 
   // ── open button → simulated path, or open the REAL confirmation modal ─────
   const onOpen = useCallback(() => {
@@ -108,8 +128,8 @@ export default function Page() {
         owner: publicKey.toBase58(),
         signTransaction: signTransaction as (tx: VersionedTransaction) => Promise<VersionedTransaction>,
       });
-      const run = await registerRun(side, result.entryPrice);
-      const position: Position = {
+      const run = await registerRun(side, result.entryPrice, publicKey.toBase58());
+      const pos: Position = {
         runId: run.runId,
         seed: run.seed,
         wsUrl: run.wsUrl,
@@ -123,30 +143,78 @@ export default function Page() {
         real: true,
         owner: handle.owner,
       };
+      setClosed(null);
+      setPosition(pos);
       setConfirm(null);
-      setScreen({ kind: "context", position });
+      setScreen({ kind: "terminal" });
+      // Authorize the run's session key (one signature) for player attribution.
+      if (run.session && signTransaction) {
+        void authorizeSession(run.runId, run.session, signTransaction, connection);
+      }
     } catch (e) {
       setConfirm({ kind: "open", busy: false, error: (e as Error).message });
     }
-  }, [publicKey, signTransaction, side, stake, leverage]);
+  }, [publicKey, signTransaction, side, stake, leverage, connection]);
 
-  // ── run end → close the real position (also gated by a confirm modal) ─────
-  const onRunEnd = useCallback((position: Position) => {
+  // ── close from the panel (independent of the game) ────────────────────────
+  // Simulated: realize PnL at the live mark instantly. Real: route through the
+  // SAME confirm modal + caps (no real tx without it).
+  const onClosePosition = useCallback(() => {
+    if (!position) return;
     if (position.real && position.owner) {
       setConfirm({ kind: "close", handle: { market: "SOL", side: position.side, owner: position.owner }, busy: false });
+      return;
     }
+    const mark = lastPrice()?.price ?? position.entryPrice;
+    const pnl = computePnl(position, mark);
+    setClosed({ side: position.side, entry: position.entryPrice, exit: mark, pnlPct: pnl.pct, pnlUsd: pnl.usd, real: false });
+    setPosition(null);
+  }, [position]);
+
+  // ── A3: ride the chart ────────────────────────────────────────────────────
+  // Chart-click → confirm prompt (nudges to open one if none). The panel button
+  // and the prompt's confirm both start the zoom transition, growing the game
+  // out of the chart's rect. The transition's completion launches gameplay.
+  const onRideChart = useCallback((from: DOMRect) => {
+    if (screen.kind !== "terminal" || confirm || ride) return;
+    setRidePrompt({ from });
+  }, [screen.kind, confirm, ride]);
+
+  const onRideStart = useCallback((from: DOMRect) => {
+    if (position) {
+      setRidePrompt(null);
+      setRide({ from, position });
+    }
+  }, [position]);
+
+  const confirmRide = useCallback(() => {
+    if (ridePrompt && position) {
+      setRide({ from: ridePrompt.from, position });
+      setRidePrompt(null);
+    }
+  }, [ridePrompt, position]);
+
+  const onRideComplete = useCallback(() => {
+    setRide((r) => {
+      if (r) setScreen({ kind: "playing", position: r.position });
+      return null;
+    });
   }, []);
 
   const confirmRealClose = useCallback(async () => {
-    if (confirm?.kind !== "close" || !signTransaction) return;
+    if (confirm?.kind !== "close" || !signTransaction || !position) return;
     setConfirm({ ...confirm, busy: true });
     try {
-      await closeReal(confirm.handle, signTransaction as (tx: VersionedTransaction) => Promise<VersionedTransaction>);
+      const sig = await closeReal(confirm.handle, signTransaction as (tx: VersionedTransaction) => Promise<VersionedTransaction>);
+      const mark = lastPrice()?.price ?? position.entryPrice;
+      const pnl = computePnl(position, mark);
+      setClosed({ side: position.side, entry: position.entryPrice, exit: mark, pnlPct: pnl.pct, pnlUsd: pnl.usd, real: true, sig });
+      setPosition(null);
       setConfirm(null);
     } catch (e) {
       setConfirm({ ...confirm, busy: false, error: (e as Error).message });
     }
-  }, [confirm, signTransaction]);
+  }, [confirm, signTransaction, position]);
 
   const modal =
     confirm?.kind === "open" ? (
@@ -164,8 +232,8 @@ export default function Page() {
       <ConfirmRealModal
         kind="close"
         side={confirm.handle.side}
-        collateralUsd={stake}
-        leverage={leverage}
+        collateralUsd={position?.stake ?? stake}
+        leverage={position?.leverage ?? leverage}
         busy={confirm.busy}
         error={confirm.error}
         onConfirm={confirmRealClose}
@@ -175,36 +243,22 @@ export default function Page() {
 
   if (screen.kind === "playing") {
     return (
-      <main className="wrap">
+      <main className="wrap game-enter">
         <Game
           position={screen.position}
-          onExit={() => setScreen({ kind: "form" })}
-          onRunEnd={() => onRunEnd(screen.position)}
+          onExit={() => {
+            setScreen({ kind: "terminal" });
+            setLeaderboardKey((k) => k + 1); // your run just finalized — refresh the board
+          }}
         />
         {modal}
       </main>
     );
   }
 
-  if (screen.kind === "context") {
-    return (
-      <main className="wrap">
-        <PositionContext position={screen.position} onRide={() => setScreen({ kind: "playing", position: screen.position })} />
-        {modal}
-      </main>
-    );
-  }
-
   return (
-    <main className="wrap">
-      <header className="topbar">
-        <div className="title">
-          <span className="pump">PUMP</span> ▲
-        </div>
-        <WalletBar />
-      </header>
-
-      <OpenForm
+    <main className={`terminal-wrap ${ride ? "riding" : ""}`}>
+      <Terminal
         connected={connected}
         opening={screen.kind === "opening"}
         realMode={realMode}
@@ -219,205 +273,22 @@ export default function Page() {
         leverage={leverage}
         setLeverage={setLeverage}
         onOpen={onOpen}
-        error={screen.kind === "form" ? screen.error : undefined}
+        error={screen.kind === "terminal" ? screen.error : undefined}
+        position={position}
+        closed={closed}
+        closing={confirm?.kind === "close" && confirm.busy}
+        onClosePosition={onClosePosition}
+        onRideChart={onRideChart}
+        onRideStart={onRideStart}
+        onDismissClosed={() => setClosed(null)}
+        wallet={publicKey?.toBase58() ?? null}
+        leaderboardKey={leaderboardKey}
       />
+      {ridePrompt && (
+        <RidePrompt position={position} onConfirm={confirmRide} onCancel={() => setRidePrompt(null)} />
+      )}
+      {ride && <RideTransition from={ride.from} side={ride.position.side} onComplete={onRideComplete} />}
       {modal}
     </main>
-  );
-}
-
-// ── live SOL price (server's feed) for the form header ──────────────────────
-function useLivePrice(): number | null {
-  const [price, setPrice] = useState<number | null>(null);
-  useEffect(() => {
-    let dead = false;
-    const load = async () => {
-      try {
-        const res = await fetch(`${GAME_HTTP}/health`, { cache: "no-store" });
-        const { price: p } = (await res.json()) as { price: number };
-        if (!dead && Number.isFinite(p) && p > 0) setPrice(p);
-      } catch {
-        /* keep last */
-      }
-    };
-    void load();
-    const id = setInterval(load, 1500);
-    return () => {
-      dead = true;
-      clearInterval(id);
-    };
-  }, []);
-  return price;
-}
-
-// ── the "open a position" surface ───────────────────────────────────────────
-function OpenForm(props: {
-  connected: boolean;
-  opening: boolean;
-  realMode: boolean;
-  setRealMode: (on: boolean) => void;
-  basket: BasketStatus | "checking" | "idle";
-  side: TradeSide;
-  setSide: (s: TradeSide) => void;
-  stake: number;
-  setStake: (n: number) => void;
-  stakeToken: StakeToken;
-  setStakeToken: (t: StakeToken) => void;
-  leverage: number;
-  setLeverage: (n: number) => void;
-  onOpen: () => void;
-  error?: string;
-}) {
-  const price = useLivePrice();
-  const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const maxLev = props.realMode ? REAL_MAX_LEVERAGE : 50;
-  const notional = props.stake * props.leverage;
-  const overCap = props.realMode && (notional > REAL_MAX_NOTIONAL_USD + 1e-9 || props.leverage > REAL_MAX_LEVERAGE);
-  const noBasket = props.realMode && props.basket === "no-basket";
-  const network = props.realMode ? "mainnet · REAL" : "devnet · simulated";
-
-  return (
-    <section className="trade-card">
-      <div className="trade-head">
-        <div>
-          <div className="label">Open a position</div>
-          <div className="market">SOL <span className="muted">/ USDC · {network}</span></div>
-        </div>
-        <div className="mark">
-          <div className="label">Mark</div>
-          <div className="value">{price ? `$${fmt(price)}` : "—"}</div>
-        </div>
-      </div>
-
-      {/* mode toggle — real mode is OPT-IN, off by default */}
-      <label className="real-toggle">
-        <input type="checkbox" checked={props.realMode} onChange={(e) => props.setRealMode(e.target.checked)} />
-        <span>
-          Real mode <span className="muted">— one real SOL perp on Flash V2 mainnet (real funds, ${REAL_MAX_NOTIONAL_USD} max, {REAL_MAX_LEVERAGE}× max)</span>
-        </span>
-      </label>
-
-      {/* basket preflight — tell the user before they try */}
-      {props.realMode && props.connected && (
-        <p className={`hint ${props.basket === "ready" ? "pnl-up" : props.basket === "no-basket" ? "pnl-down" : ""}`}>
-          {props.basket === "checking" && "Checking FlashTrade basket…"}
-          {props.basket === "ready" && "✓ FlashTrade basket detected on this wallet."}
-          {props.basket === "no-basket" && BASKET_HINT}
-          {props.basket === "unknown" && "Couldn't check the basket — you can still try; open will report if it's not set up."}
-        </p>
-      )}
-
-      {/* side */}
-      <div className="seg">
-        <button className={`seg-btn long ${props.side === "long" ? "on" : ""}`} onClick={() => props.setSide("long")}>
-          LONG ▲
-        </button>
-        <button className={`seg-btn short ${props.side === "short" ? "on" : ""}`} onClick={() => props.setSide("short")}>
-          SHORT ▼
-        </button>
-      </div>
-
-      {/* stake */}
-      <label className="field">
-        <span className="label">Stake</span>
-        <div className="stake-row">
-          <input
-            type="number"
-            min={1}
-            step={1}
-            value={props.stake}
-            onChange={(e) => props.setStake(Math.max(0, Number(e.target.value)))}
-          />
-          <div className="seg small">
-            <button className={`seg-btn ${props.stakeToken === "USDC" ? "on" : ""}`} onClick={() => props.setStakeToken("USDC")}>
-              USDC
-            </button>
-            <button
-              className={`seg-btn ${props.stakeToken === "SOL" ? "on" : ""}`}
-              disabled={props.realMode}
-              onClick={() => !props.realMode && props.setStakeToken("SOL")}
-            >
-              SOL
-            </button>
-          </div>
-        </div>
-      </label>
-
-      {/* leverage */}
-      <label className="field">
-        <span className="label">
-          Leverage <b className="mult">{props.leverage.toFixed(0)}×</b>
-          {props.realMode && <span className="muted"> · {REAL_MAX_LEVERAGE}× max in real mode</span>}
-        </span>
-        <input
-          type="range"
-          min={1}
-          max={maxLev}
-          step={1}
-          value={Math.min(props.leverage, maxLev)}
-          onChange={(e) => props.setLeverage(Math.min(Number(e.target.value), maxLev))}
-        />
-      </label>
-
-      {props.realMode && (
-        <div className="ctx-row">
-          <span>Notional</span>
-          <b className={overCap ? "pnl-down" : undefined}>${fmt(notional)}</b>
-        </div>
-      )}
-
-      {props.error && <p className="hint pnl-down">{props.error}</p>}
-      {overCap && <p className="hint pnl-down">Over the ${REAL_MAX_NOTIONAL_USD} / {REAL_MAX_LEVERAGE}× real-mode cap — lower stake or leverage.</p>}
-
-      <button
-        className={`btn open ${props.side} ${props.realMode ? "real" : ""}`}
-        disabled={!props.connected || props.opening || props.stake <= 0 || overCap || noBasket}
-        onClick={props.onOpen}
-      >
-        {props.opening
-          ? "Opening…"
-          : !props.connected
-            ? "Connect wallet to open"
-            : props.realMode
-              ? `Open REAL ${props.side === "long" ? "LONG ▲" : "SHORT ▼"} · mainnet`
-              : `Open ${props.side === "long" ? "LONG ▲" : "SHORT ▼"} position`}
-      </button>
-      <p className="hint">
-        {props.realMode
-          ? "Real mode opens an actual Flash V2 mainnet position — you'll confirm before signing."
-          : "Devnet-simulated. You'll ride the position as the bird — its altitude is your live PnL."}
-      </p>
-    </section>
-  );
-}
-
-// ── position context → ride ─────────────────────────────────────────────────
-function PositionContext({ position, onRide }: { position: Position; onRide: () => void }) {
-  const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const isLong = position.side === "long";
-  return (
-    <section className="trade-card">
-      <div className="trade-head">
-        <div>
-          <div className="label">Position opened</div>
-          <div className="market">{position.market} <span className="muted">/ USDC · {position.real ? "mainnet · REAL" : "devnet · simulated"}</span></div>
-        </div>
-        <div className={`pos-tag ${isLong ? "long" : "short"}`}>
-          {isLong ? "LONG ▲" : "SHORT ▼"} {position.leverage}×
-        </div>
-      </div>
-
-      <div className="ctx-row"><span>Entry</span><b>${fmt(position.entryPrice)}</b></div>
-      <div className="ctx-row"><span>Stake</span><b>{fmt(position.stake)} {position.stakeToken}</b></div>
-      <div className="ctx-row"><span>Leverage</span><b>{position.leverage}×</b></div>
-      <div className="ctx-row"><span>Liquidation</span><b className="pnl-down">${fmt(position.liquidationPrice)}</b></div>
-
-      <p className={`hint ${position.real ? "pnl-down" : "sim"}`}>
-        {position.real ? "REAL position open on Flash V2 mainnet — closes on run end." : "Simulated fill — no on-chain trade."}
-      </p>
-      <button className={`btn open ${position.side}`} onClick={onRide}>
-        Ride it ▲
-      </button>
-    </section>
   );
 }

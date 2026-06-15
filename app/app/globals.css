@@ -510,3 +510,837 @@ canvas {
 .confirm-real .row .btn {
   flex: 1;
 }
+
+/* ── trading terminal (Phase A1) ──────────────────────────────────────────── */
+.terminal-wrap {
+  min-height: 100%;
+  padding: 16px;
+  display: flex;
+  justify-content: center;
+}
+.terminal {
+  width: 100%;
+  max-width: 1180px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* top bar: brand · market · wallet */
+.terminal-top {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 4px 2px;
+}
+.terminal-brand {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+.terminal-brand .pump {
+  color: var(--up);
+}
+
+.market-header {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex: 1;
+}
+.mh-pair {
+  font-size: 18px;
+  font-weight: 800;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.mh-mark {
+  font-size: 24px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.mh-net {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+.mh-net .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.mh-net.sim {
+  background: rgba(25, 195, 125, 0.12);
+  color: var(--up);
+}
+.mh-net.sim .dot {
+  background: var(--up);
+}
+.mh-net.real {
+  background: rgba(246, 70, 93, 0.14);
+  color: var(--down);
+}
+.mh-net.real .dot {
+  background: var(--down);
+}
+
+/* body: chart + trade panel */
+.terminal-body {
+  display: flex;
+  gap: 14px;
+  align-items: stretch;
+}
+.terminal-chart {
+  flex: 1;
+  min-width: 0;
+  height: 560px;
+  background: var(--bg);
+  border: 1px solid #1e2a3c;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.price-chart {
+  width: 100%;
+  height: 100%;
+}
+
+/* right column: trade panel + positions panel stacked */
+.terminal-side {
+  width: 360px;
+  flex: 0 0 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-self: flex-start;
+}
+.trade-panel,
+.positions-panel,
+.leaderboard-panel {
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid #1e2a3c;
+  border-radius: 12px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* leaderboard */
+.lb-sub {
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.3px;
+}
+.lb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lb-row {
+  display: grid;
+  grid-template-columns: 34px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.lb-row.mine {
+  background: rgba(25, 195, 125, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(25, 195, 125, 0.35);
+}
+.lb-rank {
+  font-weight: 700;
+  color: var(--muted);
+}
+.lb-wallet {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.lb-you {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--up);
+  background: rgba(25, 195, 125, 0.16);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.lb-mult {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+.lb-score {
+  font-weight: 800;
+  min-width: 48px;
+  text-align: right;
+}
+.lb-divider {
+  height: 1px;
+  background: #243246;
+  margin: 4px 0 2px;
+}
+.lb-you-note {
+  font-size: 12px;
+  color: var(--up);
+  font-weight: 700;
+  margin: 0;
+}
+.lb-you-note.muted {
+  color: var(--muted);
+  font-weight: 500;
+}
+.panel-title {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+/* positions panel */
+.positions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.positions-panel.empty {
+  opacity: 0.85;
+}
+.pos-empty {
+  margin: 4px 0 2px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.pos-pnl-big {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0 2px;
+}
+.pos-pnl-big > span:first-child {
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
+}
+.pos-pnl-pct {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 880px) {
+  .terminal-body {
+    flex-direction: column;
+  }
+  .terminal-chart {
+    height: 360px;
+  }
+  .terminal-side {
+    width: 100%;
+    flex: 1;
+  }
+  .terminal-top {
+    flex-wrap: wrap;
+  }
+}
+
+/* ── A3: ride the chart ────────────────────────────────────────────────────── */
+/* clickable chart: hover affordance + glow. The hint never blocks the chart's
+   own crosshair (pointer-events: none). */
+.terminal-chart.rideable {
+  position: relative;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.terminal-chart.rideable:hover {
+  border-color: var(--up);
+  box-shadow: 0 0 0 1px rgba(25, 195, 125, 0.35), 0 0 38px rgba(25, 195, 125, 0.16) inset;
+}
+.ride-hint {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translate(-50%, -6px);
+  pointer-events: none;
+  z-index: 3;
+  background: rgba(25, 195, 125, 0.16);
+  color: var(--up);
+  border: 1px solid rgba(25, 195, 125, 0.5);
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  backdrop-filter: blur(4px);
+}
+.terminal-chart.rideable:hover .ride-hint {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* terminal dollies back while the zoom plays (parallax depth) */
+.terminal-wrap.riding .terminal {
+  transform: scale(1.04);
+  filter: blur(5px);
+  opacity: 0.55;
+  transition: transform 0.76s cubic-bezier(0.16, 1, 0.3, 1), filter 0.5s ease, opacity 0.5s ease;
+  pointer-events: none;
+}
+
+/* "Ride this chart?" confirm prompt */
+.ride-overlay {
+  position: fixed;
+  z-index: 50;
+  background: rgba(6, 9, 14, 0.74);
+  backdrop-filter: blur(3px);
+  animation: ride-fade-in 0.18s ease both;
+}
+.ride-prompt {
+  width: 320px;
+  background: var(--panel);
+  border: 1px solid #243246;
+  border-radius: 16px;
+  padding: 22px 22px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.65);
+  animation: ride-pop 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.ride-bird {
+  font-size: 40px;
+  line-height: 1;
+  color: var(--up);
+  text-shadow: 0 0 22px rgba(25, 195, 125, 0.6);
+}
+.ride-bird.muted {
+  color: var(--muted);
+  text-shadow: none;
+}
+.ride-sub {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0;
+}
+.ride-rows {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid #243246;
+  padding-top: 10px;
+  margin-top: 2px;
+}
+.ride-rows .r-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--muted);
+}
+.ride-rows .r-row b {
+  color: var(--text);
+}
+.ride-prompt .row {
+  width: 100%;
+  margin-top: 4px;
+}
+.ride-prompt .row .btn {
+  flex: 1;
+}
+
+/* the zoom: a full-viewport panel that grows out of the chart's rect */
+.ride-zoom-wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ride-zoom {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  transform-origin: 0 0;
+  transition: transform 0.76s cubic-bezier(0.16, 1, 0.3, 1);
+  background:
+    radial-gradient(120% 90% at 50% 64%, #122033 0%, var(--bg) 60%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  overflow: hidden;
+}
+.ride-zoom-glow {
+  position: absolute;
+  width: 60vmax;
+  height: 60vmax;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(25, 195, 125, 0.22) 0%, rgba(25, 195, 125, 0) 60%);
+  opacity: 0;
+  transform: scale(0.4);
+  transition: opacity 0.6s ease 0.1s, transform 0.76s cubic-bezier(0.16, 1, 0.3, 1) 0.05s;
+}
+.ride-zoom-bird {
+  font-size: 92px;
+  line-height: 1;
+  color: var(--up);
+  opacity: 0;
+  transform: translateY(40px) scale(0.6);
+  transition: opacity 0.45s ease 0.14s, transform 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.1s;
+  text-shadow: 0 0 50px rgba(25, 195, 125, 0.7);
+}
+.ride-zoom-bird.short {
+  color: var(--down);
+  text-shadow: 0 0 50px rgba(246, 70, 93, 0.7);
+}
+.ride-zoom-label {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 6px;
+  color: var(--muted);
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.4s ease 0.26s, transform 0.5s ease 0.26s;
+}
+.ride-zoom.in .ride-zoom-glow {
+  opacity: 1;
+  transform: scale(1);
+}
+.ride-zoom.in .ride-zoom-bird {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.ride-zoom.in .ride-zoom-label {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* the game fades up from the same bg the zoom handed off — seamless, no flash */
+.game-enter {
+  animation: game-enter 0.34s ease both;
+}
+
+@keyframes ride-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes ride-pop {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes game-enter {
+  from { opacity: 0; transform: scale(1.03); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ride-zoom,
+  .ride-zoom-glow,
+  .ride-zoom-bird,
+  .ride-zoom-label,
+  .terminal-wrap.riding .terminal,
+  .game-enter {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PAPER / HAND-DRAWN THEME — terminal only (B-redesign).
+   Scoped under .terminal-wrap so the game (:root palette) stays dark and
+   untouched. Chrome borders are drawn by <SketchFrame> (Rough.js); CSS makes the
+   underlying borders/backgrounds transparent and handles type + colour.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* sketch primitives (terminal-only classes) */
+.sketch-frame {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: visible;
+}
+.sketch-btn {
+  position: relative;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 11px 16px;
+  font-family: var(--font-hand);
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--ink);
+  transition: filter 0.12s ease, transform 0.04s ease;
+}
+.sketch-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.sketch-btn:not(:disabled):hover { filter: brightness(0.965) saturate(1.05); }
+.sketch-btn:not(:disabled):active { transform: translateY(1px); }
+.sketch-btn-label {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.sketch-btn.tone-up .sketch-btn-label { color: #08160e; font-weight: 400; }
+.sketch-btn.tone-down .sketch-btn-label { color: #1c0407; }
+.sketch-divider { width: 100%; line-height: 0; }
+.sketch-divider svg { display: block; width: 100%; height: 8px; }
+
+/* ── palette + paper ───────────────────────────────────────────────────────── */
+.terminal-wrap {
+  --ink: #2a2a2a;
+  --bg: #f4f1e8;
+  --panel: transparent;
+  --text: #2a2a2a;
+  --muted: #6b6357;
+  --accent: #b9751a;
+  --up: #1f9e63;
+  --down: #d83a4d;
+  color: var(--ink);
+  font-family: var(--font-hand);
+  background-color: #f4f1e8;
+  background-image:
+    linear-gradient(rgba(42, 42, 42, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(42, 42, 42, 0.045) 1px, transparent 1px);
+  background-size: 23px 23px;
+}
+
+/* clean, legible font for ALL numbers (prices, PnL, scores, ranks) */
+.terminal-wrap .mh-mark,
+.terminal-wrap .pos-pnl-big,
+.terminal-wrap .pos-pnl-pct,
+.terminal-wrap .ctx-row b,
+.terminal-wrap .lb-score,
+.terminal-wrap .lb-mult,
+.terminal-wrap .lb-rank,
+.terminal-wrap .lb-wallet,
+.terminal-wrap .r-row b,
+.terminal-wrap input[type="number"],
+.terminal-wrap .mult,
+.terminal-wrap .ride-rows .r-row b {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
+/* headings/labels keep the hand font; bump weight expectations down (the hand
+   font has a single weight) and let size carry hierarchy */
+.terminal-wrap .panel-title,
+.terminal-wrap .terminal-brand,
+.terminal-wrap .confirm-title { font-weight: 400; }
+.terminal-wrap .panel-title { font-size: 17px; letter-spacing: 0.3px; }
+
+/* ── top bar ───────────────────────────────────────────────────────────────── */
+.terminal-wrap .terminal-brand { font-size: 26px; letter-spacing: 0.5px; }
+.terminal-wrap .terminal-brand .pump { color: var(--up); }
+
+.terminal-wrap .market-header {
+  position: relative;
+  flex: 0 1 auto;
+  align-items: center;
+  padding: 8px 16px;
+  margin: 0 2px;
+}
+.terminal-wrap .mh-pair { font-size: 17px; font-weight: 400; }
+.terminal-wrap .mh-mark { font-size: 22px; font-weight: 700; }
+.terminal-wrap .mh-net {
+  position: relative;
+  border-radius: 0;
+  background: transparent !important;
+  padding: 4px 10px;
+  font-family: var(--font-hand);
+  letter-spacing: 0.5px;
+}
+.terminal-wrap .mh-net.sim { color: var(--up); }
+.terminal-wrap .mh-net.real { color: var(--down); }
+
+/* ── cards (frames drawn by SketchFrame) ───────────────────────────────────── */
+.terminal-wrap .trade-panel,
+.terminal-wrap .positions-panel,
+.terminal-wrap .leaderboard-panel,
+.terminal-wrap .terminal-chart {
+  position: relative;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+.terminal-wrap .terminal-chart { overflow: visible; }
+
+/* ── buttons: neutralise legacy .btn / .seg-btn (now rendered as .sketch-btn) ─ */
+.terminal-wrap .btn,
+.terminal-wrap .seg-btn {
+  font-family: var(--font-hand);
+  font-weight: 400;
+}
+
+/* ── inputs ────────────────────────────────────────────────────────────────── */
+.terminal-wrap .sketch-input {
+  position: relative;
+  display: flex;
+  flex: 1;
+}
+.terminal-wrap input[type="number"] {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 700;
+  padding: 10px 12px;
+}
+.terminal-wrap input[type="number"]:focus { outline: none; }
+
+/* hand-styled range slider */
+.terminal-wrap input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+}
+.terminal-wrap input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px;
+  background: var(--ink);
+  border-radius: 2px;
+}
+.terminal-wrap input[type="range"]::-moz-range-track {
+  height: 3px;
+  background: var(--ink);
+  border-radius: 2px;
+}
+.terminal-wrap input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -8px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1.5px solid var(--ink);
+}
+.terminal-wrap input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1.5px solid var(--ink);
+}
+
+/* ── chips / tags ──────────────────────────────────────────────────────────── */
+.terminal-wrap .pos-tag {
+  position: relative;
+  background: transparent !important;
+  border-radius: 0;
+  padding: 4px 10px;
+  font-family: var(--font-hand);
+  font-weight: 400;
+}
+.terminal-wrap .pos-tag.long { color: #15643f; }
+.terminal-wrap .pos-tag.short { color: #9e2230; }
+
+/* ── real-mode toggle ──────────────────────────────────────────────────────── */
+.terminal-wrap .real-toggle {
+  position: relative;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+.terminal-wrap .real-toggle input { accent-color: var(--down); }
+
+/* ── leaderboard ───────────────────────────────────────────────────────────── */
+.terminal-wrap .lb-row.mine {
+  background: rgba(31, 158, 99, 0.14);
+  box-shadow: none;
+  border-radius: 7px;
+}
+.terminal-wrap .lb-you {
+  color: var(--up);
+  background: rgba(31, 158, 99, 0.16);
+  border-radius: 5px;
+  font-family: var(--font-hand);
+}
+.terminal-wrap .lb-mult { color: var(--accent); }
+.terminal-wrap .lb-wallet { color: var(--ink); }
+
+/* ── dividers that were 1px CSS lines → soften to ink ──────────────────────── */
+.terminal-wrap .lb-divider,
+.terminal-wrap .ride-rows { border-color: rgba(42, 42, 42, 0.18); }
+.terminal-wrap .lb-divider { background: rgba(42, 42, 42, 0.2); }
+
+/* ── modals / overlays over paper ──────────────────────────────────────────── */
+.terminal-wrap .overlay,
+.terminal-wrap .ride-overlay {
+  background: rgba(42, 38, 32, 0.34);
+  backdrop-filter: blur(2px);
+}
+.terminal-wrap .confirm-real,
+.terminal-wrap .ride-prompt {
+  position: relative;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+.terminal-wrap .real-banner {
+  position: relative;
+  background: transparent;
+  color: var(--down);
+  border-radius: 0;
+  font-family: var(--font-hand);
+  letter-spacing: 0.5px;
+}
+.terminal-wrap .caps-note { border-color: rgba(42, 42, 42, 0.18); }
+.terminal-wrap .ride-bird,
+.terminal-wrap .ride-zoom-bird { /* keep emoji/glyph as-is */ }
+
+/* terminal dolly-back during the ride zoom still works on the paper terminal */
+.terminal-wrap.riding .terminal { filter: blur(4px); }
+
+/* hover affordance on the chart stays, retinted to ink/green */
+.terminal-wrap .terminal-chart.rideable:hover { box-shadow: none; }
+.terminal-wrap .ride-hint {
+  background: rgba(31, 158, 99, 0.16);
+  color: #15643f;
+  border: 1.5px solid #1f9e63;
+  font-family: var(--font-hand);
+  letter-spacing: 0.3px;
+}
+
+/* sketch-button layout (replacing the old .btn / .seg-btn flex behaviour) */
+.terminal-wrap .seg .sketch-btn { flex: 1; padding: 10px 12px; font-size: 14px; }
+.terminal-wrap .seg.small .sketch-btn { flex: 1; padding: 10px 12px; }
+.terminal-wrap .open-sketch { width: 100%; padding: 14px; font-size: 16px; }
+.terminal-wrap .row .sketch-btn,
+.terminal-wrap .confirm-real .row .sketch-btn,
+.terminal-wrap .ride-prompt .row .sketch-btn { flex: 1; }
+.terminal-wrap .real-banner { padding: 8px 7px; }
+.terminal-wrap .sketch-input { position: relative; display: flex; flex: 1; }
+
+/* custom Rough.js candlestick canvas */
+.terminal-wrap .price-chart { position: relative; width: 100%; height: 100%; }
+.terminal-wrap .price-chart canvas { display: block; width: 100%; height: 100%; }
+
+/* keep the wallet pushed to the right of the top bar; retint the wallet button */
+.terminal-wrap .market-header { margin-right: auto; }
+.terminal-wrap .terminal-top { align-items: center; }
+.terminal-wrap .wallet-adapter-button,
+.terminal-wrap .wallet-adapter-button-trigger {
+  background: #ece4d2 !important;
+  color: var(--ink) !important;
+  border: 1.5px solid var(--ink) !important;
+  border-radius: 7px !important;
+  font-family: var(--font-hand) !important;
+}
+.terminal-wrap .wallet-meta .addr { color: var(--muted); font-family: var(--font-num); }
+.terminal-wrap .wallet-meta .bal { font-family: var(--font-num); }
+.terminal-wrap .wallet-meta .net { color: var(--accent); }
+
+/* ═══ LAYOUT — trader's-desk grid (Option C): chart + ticket on top, full-width
+   leaderboard board across the bottom. Full viewport, no orphaned quadrants. ═══ */
+.terminal-wrap {
+  height: 100vh;
+  min-height: 100vh;
+  padding: 14px;
+  align-items: stretch;
+}
+.terminal-wrap .terminal {
+  max-width: 1640px;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+}
+.terminal-wrap .terminal-top { flex: 0 0 auto; }
+
+/* main row: dominant chart + right ticket rail, sharing one height (no void) */
+.terminal-wrap .terminal-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(330px, 25vw, 400px);
+  gap: 12px;
+  min-height: 0;
+}
+.terminal-wrap .terminal-chart { height: 100%; min-height: 0; }
+.terminal-wrap .terminal-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+.terminal-wrap .terminal-rail .trade-panel { flex: 0 0 auto; }
+.terminal-wrap .terminal-rail .positions-panel { flex: 1 1 auto; min-height: 0; overflow: auto; }
+
+/* bottom row: the leaderboard board */
+.terminal-wrap .terminal-board { min-height: 0; }
+.terminal-wrap .leaderboard-panel.board { padding: 12px 18px 14px; gap: 8px; }
+.terminal-wrap .lb-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.terminal-wrap .lb-head-l { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.terminal-wrap .lb-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(214px, 1fr));
+  gap: 6px 10px;
+  max-height: 27vh;
+  overflow-y: auto;
+}
+.terminal-wrap .lb-cell {
+  position: relative;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 7px;
+}
+.terminal-wrap .lb-cell .lb-rank { font-family: var(--font-num); font-weight: 700; color: var(--muted); }
+.terminal-wrap .lb-cell.podium .lb-rank { font-size: 15px; }
+.terminal-wrap .lb-cellmid { display: flex; flex-direction: column; gap: 0; min-width: 0; }
+.terminal-wrap .lb-cellmid .lb-wallet { font-size: 13px; }
+.terminal-wrap .lb-cellmid .lb-mult { font-size: 11px; }
+.terminal-wrap .lb-cell .lb-score { font-family: var(--font-num); font-weight: 800; font-size: 15px; }
+.terminal-wrap .lb-cell.mine { background: rgba(31, 158, 99, 0.14); box-shadow: inset 0 0 0 1.5px rgba(31, 158, 99, 0.4); }
+.terminal-wrap .lb-empty { color: var(--muted); padding: 10px 2px; font-size: 14px; }
+
+/* responsive: stack on narrow screens (chart fixed height, then rail, then board) */
+@media (max-width: 980px) {
+  .terminal-wrap { height: auto; min-height: 100vh; }
+  .terminal-wrap .terminal { height: auto; }
+  .terminal-wrap .terminal-main { grid-template-columns: 1fr; }
+  .terminal-wrap .terminal-chart { height: 52vh; min-height: 320px; }
+  .terminal-wrap .terminal-rail .positions-panel { overflow: visible; }
+  .terminal-wrap .lb-board { max-height: none; }
+}

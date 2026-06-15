@@ -2,6 +2,7 @@
 
 import type { TradeSide } from "@pump/shared";
 import { REAL_MAX_NOTIONAL_USD, REAL_MAX_LEVERAGE } from "../lib/flash-real";
+import { SketchFrame, SketchButton } from "./terminal/sketch";
 
 /**
  * Blocking confirmation shown before ANY real-money transaction. The real
@@ -24,7 +25,8 @@ export function ConfirmRealModal(props: {
   return (
     <div className="overlay">
       <div className="confirm-real">
-        <div className="real-banner">⚠ REAL MONEY · Solana mainnet</div>
+        <SketchFrame variant="modal" />
+        <div className="real-banner"><SketchFrame variant="outline" />⚠ REAL MONEY · Solana mainnet</div>
         <div className="confirm-title">
           {props.kind === "open" ? "Open real position" : "Close real position"}
         </div>
@@ -43,11 +45,12 @@ export function ConfirmRealModal(props: {
         {props.error && <p className="hint pnl-down">{props.error}</p>}
 
         <div className="row">
-          <button className="btn ghost" onClick={props.onCancel} disabled={props.busy}>
+          <SketchButton frame="ghost" onClick={props.onCancel} disabled={props.busy}>
             Cancel
-          </button>
-          <button
-            className={`btn ${props.side === "long" ? "" : "short"}`}
+          </SketchButton>
+          <SketchButton
+            frame={props.side === "long" ? "up" : "down"}
+            className={props.side === "long" ? "tone-up" : "tone-down"}
             onClick={props.onConfirm}
             disabled={props.busy || overCap}
           >
@@ -56,7 +59,7 @@ export function ConfirmRealModal(props: {
               : props.kind === "open"
                 ? "Sign & open real position"
                 : "Sign & close real position"}
-          </button>
+          </SketchButton>
         </div>
         <p className="hint">You&apos;ll approve the exact transaction in your wallet next.</p>
       </div>

@@ -43,7 +43,17 @@ const LOCK_KEY = "relay:singleton";
 const LOCK_TTL_MS = 6000;
 async function acquireSingletonLock(redis: ReturnType<typeof createClient>) {
   const id = `${process.pid}@${Date.now()}`;
-  const ok = await redis.set(LOCK_KEY, id, { NX: true, PX: LOCK_TTL_MS });
+  // Retry while a held lock expires: a `tsx watch` hot-reload kills the old
+  // instance and starts a new one before the old's lock release lands, so the
+  // new one must wait out the (≤TTL) stale lock rather than refuse outright. A
+  // genuinely concurrent second relay keeps refreshing its lock, so these
+  // retries never succeed and it exits — the singleton guarantee holds.
+  let ok: string | null = null;
+  for (let attempt = 0; attempt < 9; attempt++) {
+    ok = await redis.set(LOCK_KEY, id, { NX: true, PX: LOCK_TTL_MS });
+    if (ok === "OK") break;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
   if (ok !== "OK") {
     console.error(
       "[price-relay] another price-relay is already publishing to this Redis — refusing to start a second " +

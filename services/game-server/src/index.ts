@@ -23,9 +23,21 @@ import {
   type Side,
   type ClientMessage,
   type ServerMessage,
+  type LeaderboardEntry,
+  type LeaderboardResponse,
 } from "@pump/shared";
 import { createRunState, stepRun, type RunState, type DeathReason } from "./run.js";
-import { erStartRun, applyEventTx, endRunTx, closePosition, settle } from "./onchain.js";
+import {
+  erStartRun,
+  applyEventTx,
+  endRunTx,
+  closePosition,
+  settle,
+  prepareSession,
+  markSessionReady,
+  setFinalizedHandler,
+  type FinalizedRun,
+} from "./onchain.js";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://127.0.0.1:6379";
 const PORT = Number(process.env.PORT || 8787);
@@ -37,6 +49,73 @@ const STATE_HEARTBEAT_MS = 500;
 
 const runs = new Map<string, RunState>();
 let latestPrice = 0;
+
+// Redis cache client (price seed + leaderboard). Assigned in main(); module-scoped
+// so the leaderboard recorder and HTTP reader can use it.
+let cache: ReturnType<typeof createClient> | null = null;
+
+// ── leaderboard (Redis ZSET, architecture §6) ────────────────────────────────
+// lb:all  ZSET  member=wallet, score=best finalized on-chain points (one row/player)
+// lb:meta HASH  field=wallet → JSON { score, multiplierBps, pda, runId, ts }
+const LB_ZSET = "lb:all";
+const LB_META = "lb:meta";
+
+/** Record a finalized run on the board — best score per player wins. Source of
+ *  truth is the authoritative on-chain score passed in from end_run finalization. */
+async function recordFinalized(r: FinalizedRun): Promise<void> {
+  const c = cache;
+  if (!c) return;
+  try {
+    const prev = await c.zScore(LB_ZSET, r.wallet);
+    if (prev !== null && r.score <= prev) return; // not a new best — keep the higher
+    await c.zAdd(LB_ZSET, { score: r.score, value: r.wallet });
+    await c.hSet(
+      LB_META,
+      r.wallet,
+      JSON.stringify({ score: r.score, multiplierBps: r.multiplierBps, pda: r.pda, runId: r.runId, ts: r.ts }),
+    );
+    console.log(`[lb] recorded ${r.wallet.slice(0, 8)} score=${r.score} (prev=${prev ?? "—"})`);
+  } catch (e) {
+    console.error("[lb] record failed:", (e as Error).message);
+  }
+}
+
+/** Read the top N players + the connected wallet's placement. */
+async function readLeaderboard(me: string | null, limit: number): Promise<LeaderboardResponse> {
+  const empty: LeaderboardResponse = { top: [], me: null, updatedAt: Date.now() };
+  const c = cache;
+  if (!c) return empty;
+  const rows = await c.zRangeWithScores(LB_ZSET, 0, limit - 1, { REV: true });
+  const meta = (await c.hGetAll(LB_META)) as Record<string, string>;
+  const multOf = (wallet: string): number => {
+    try {
+      return meta[wallet] ? (JSON.parse(meta[wallet]).multiplierBps as number) : 0;
+    } catch {
+      return 0;
+    }
+  };
+  const top: LeaderboardEntry[] = rows.map((row, i) => ({
+    rank: i + 1,
+    wallet: row.value,
+    score: row.score,
+    multiplierBps: multOf(row.value),
+  }));
+
+  let meEntry: LeaderboardEntry | null = null;
+  if (me) {
+    const inTop = top.find((e) => e.wallet === me);
+    if (inTop) {
+      meEntry = inTop;
+    } else {
+      const rank = await c.zRevRank(LB_ZSET, me); // 0-based, null if absent
+      const score = await c.zScore(LB_ZSET, me);
+      if (rank !== null && score !== null) {
+        meEntry = { rank: rank + 1, wallet: me, score, multiplierBps: multOf(me) };
+      }
+    }
+  }
+  return { top, me: meEntry, updatedAt: Date.now() };
+}
 
 // ── run registry ───────────────────────────────────────────────────────────
 function randomSeed(): string {
@@ -162,7 +241,19 @@ function handleMessage(ws: WebSocket, raw: string) {
   }
 }
 
-// ── HTTP (POST /runs, GET /health) ───────────────────────────────────────────
+// ── price stream (SSE) ────────────────────────────────────────────────────────
+// Browsers (the terminal chart) get live ticks here. This fans out the SAME
+// Redis `ticks` the game loop consumes — one price source of truth — so the
+// chart and the bird never disagree. Read-only; no game/trade logic.
+const priceClients = new Set<ServerResponse>();
+
+function broadcastPrice(price: number, ts: number) {
+  if (priceClients.size === 0) return;
+  const frame = `data: ${JSON.stringify({ price, ts })}\n\n`;
+  for (const res of priceClients) res.write(frame);
+}
+
+// ── HTTP (POST /runs, GET /health, GET /prices/stream) ───────────────────────
 function cors(res: ServerResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -184,23 +275,74 @@ function httpHandler(req: IncomingMessage, res: ServerResponse) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/leaderboard") {
+    const me = url.searchParams.get("me");
+    const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 50, 1), 100);
+    void (async () => {
+      try {
+        const board = await readLeaderboard(me, limit);
+        res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+        res.end(JSON.stringify(board));
+      } catch (e) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: (e as Error).message }));
+      }
+    })();
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/prices/stream") {
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    });
+    priceClients.add(res);
+    if (latestPrice > 0) res.write(`data: ${JSON.stringify({ price: latestPrice, ts: Date.now() })}\n\n`);
+    const ping = setInterval(() => res.write(": ping\n\n"), 20000); // keep proxies from closing it
+    req.on("close", () => {
+      clearInterval(ping);
+      priceClients.delete(res);
+    });
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/runs") {
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", () => {
-      let side: Side = 0;
-      let entryPrice = 0;
-      try {
-        const parsed = body ? JSON.parse(body) : {};
-        if (parsed.side === "short" || parsed.side === 1) side = 1;
-        if (typeof parsed.entryPrice === "number" && parsed.entryPrice > 0) entryPrice = parsed.entryPrice;
-      } catch {
-        /* default long, derive entry from live price */
-      }
-      const run = createRun(side, entryPrice);
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(run));
+      void (async () => {
+        let side: Side = 0;
+        let entryPrice = 0;
+        let owner: string | undefined;
+        try {
+          const parsed = body ? JSON.parse(body) : {};
+          if (parsed.side === "short" || parsed.side === 1) side = 1;
+          if (typeof parsed.entryPrice === "number" && parsed.entryPrice > 0) entryPrice = parsed.entryPrice;
+          if (typeof parsed.owner === "string" && parsed.owner.length >= 32) owner = parsed.owner;
+        } catch {
+          /* default long, derive entry from live price */
+        }
+        const run = createRun(side, entryPrice);
+        // Prepare the per-run session key (player attribution). Best-effort: if it
+        // returns null the run still works via the server-signed fallback.
+        const session = owner ? await prepareSession(run.runId, owner) : null;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ...run, session }));
+      })();
     });
+    return;
+  }
+
+  // POST /runs/:id/session-ready — the client confirms it submitted createSessionV2.
+  const readyMatch = req.method === "POST" ? url.pathname.match(/^\/runs\/([^/]+)\/session-ready$/) : null;
+  if (readyMatch) {
+    const runId = decodeURIComponent(readyMatch[1]!);
+    void (async () => {
+      const ready = await markSessionReady(runId);
+      res.writeHead(ready ? 200 : 202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ready }));
+    })();
     return;
   }
 
@@ -211,18 +353,25 @@ function httpHandler(req: IncomingMessage, res: ServerResponse) {
 // ── boot ──────────────────────────────────────────────────────────────────────
 async function main() {
   const sub = createClient({ url: REDIS_URL });
-  const cache = createClient({ url: REDIS_URL });
+  const cacheClient = createClient({ url: REDIS_URL });
+  cache = cacheClient;
   sub.on("error", (e) => console.error("[game-server] redis sub error:", e.message));
-  cache.on("error", (e) => console.error("[game-server] redis error:", e.message));
-  await Promise.all([sub.connect(), cache.connect()]);
+  cacheClient.on("error", (e) => console.error("[game-server] redis error:", e.message));
+  await Promise.all([sub.connect(), cacheClient.connect()]);
+
+  // Index finalized runs onto the leaderboard (authoritative on-chain score).
+  setFinalizedHandler((r) => void recordFinalized(r));
 
   // Seed latest price, then keep it fresh from the pub/sub stream.
-  const seeded = await cache.get(`price:${SYMBOL}`);
+  const seeded = await cacheClient.get(`price:${SYMBOL}`);
   if (seeded) latestPrice = JSON.parse(seeded).price ?? 0;
   await sub.subscribe("ticks", (raw) => {
     try {
       const tick = JSON.parse(raw);
-      if (tick.symbol === SYMBOL) latestPrice = tick.price;
+      if (tick.symbol === SYMBOL) {
+        latestPrice = tick.price;
+        broadcastPrice(tick.price, tick.ts ?? Date.now()); // fan out to terminal chart (SSE)
+      }
     } catch {
       /* ignore malformed tick */
     }

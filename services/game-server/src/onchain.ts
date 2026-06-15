@@ -1,38 +1,53 @@
 /**
- * On-chain side-effects of a run.
+ * On-chain side-effects of a run, with PER-PLAYER SESSION KEYS (Phase B1).
  *
- * ER score writes (apply_event/end_run) are now LIVE — the exact proven
- * lifecycle from scripts/er-smoke.ts (Step 3), moved into the running game
- * server and signed by a server "session key" (a devnet keypair the server
- * controls, so taps never prompt anyone). Gated behind ER_ENABLED so the
- * default flow is unchanged; failures are logged, never fatal (gameplay and the
- * trade path must not be affected).
+ * Attribution: each RunSession.player is the player's REAL wallet, not the
+ * server. We mirror the MagicBlock session-keys example
+ * (../magicblock-engine-examples/session-keys): the player's wallet signs ONCE
+ * to authorize an ephemeral session key (gum `createSessionV2`), and that
+ * server-held session key then signs every in-run ER tx — so taps never prompt
+ * and the score still belongs to the player.
  *
- *   per run on join:   start_run + delegate_run        → base devnet RPC
- *   per scoring event:  apply_event(tick, pts, mult)   → ER (devnet.magicblock.app)
- *   on run end:         end_run (commit + undelegate)   → finalizes on base
+ *   POST /runs:        prepareSession()  → build createSessionV2 (player signs once)
+ *   /runs/:id/ready:   markSessionReady() → confirm the token landed on base
+ *   on WS join:        start_run(player = wallet, payer = session key) + delegate
+ *   per scoring event:  apply_event(... session key)  → ER
+ *   on run end:         end_run (commit + undelegate, session key) → finalizes base
  *
- * The trade path (closePosition / settle) stays stubbed — untouched here.
+ * Resilience: if any session step is missing/unconfirmed, we FALL BACK to the
+ * old server-signed path (player = server key) so a run never breaks — the guard
+ * `#[session_auth_or(player == payer)]` accepts both paths. Failures are logged,
+ * never fatal. Gameplay and the trade path are untouched.
  */
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import * as anchor from "@coral-xyz/anchor";
 import { Program, BN, web3 } from "@coral-xyz/anchor";
 import { GetCommitmentSignature } from "@magicblock-labs/ephemeral-rollups-sdk";
+import { SessionTokenManager } from "@magicblock-labs/gum-sdk";
 import type { RunState } from "./run.js";
 
 const ER_ENABLED = process.env.ER_ENABLED === "true";
 const RUN_SEED = "run";
+const SESSION_TOKEN_SEED = "session_token_v2";
+const SESSION_TTL_SECS = 3600; // session valid 1 hour — covers terminal → ride
+const SESSION_TOPUP_LAMPORTS = Math.floor(0.01 * web3.LAMPORTS_PER_SOL); // funds rent+fees for start_run PDA + delegate buffer
 
-// Lazy one-time context (only built when ER is enabled and first used).
-// program/programER are typed `any`: the IDL is loaded as a generic anchor.Idl,
-// so the generated methods/accounts aren't statically typed. The exact calls are
-// the proven ones from scripts/er-smoke.ts.
+type Progs = { base: any; er: any };
+
+// Lazy one-time context. program/programER are typed `any`: the IDL is loaded as
+// a generic anchor.Idl so generated methods aren't statically typed (the calls
+// are the proven ones from scripts/er-smoke.ts).
 let ctx: {
-  program: any;
-  programER: any;
-  signer: web3.PublicKey;
+  idl: anchor.Idl;
+  baseConn: web3.Connection;
+  erConn: web3.Connection;
+  serverKp: web3.Keypair;
+  program: any; // server-key base program — reads + fallback signer
+  programER: any; // server-key ER program
+  programId: web3.PublicKey;
   validator: web3.PublicKey;
+  stm: SessionTokenManager; // gum session-token manager (build createSessionV2 + program id)
 } | null = null;
 
 function getCtx() {
@@ -42,132 +57,354 @@ function getCtx() {
   ) as anchor.Idl;
   const kpPath = (process.env.KEYPAIR_PATH || `${homedir()}/.config/solana/id.json`).replace(/^~/, homedir());
   const secret = Uint8Array.from(JSON.parse(readFileSync(kpPath, "utf8")) as number[]);
-  const wallet = new anchor.Wallet(web3.Keypair.fromSecretKey(secret));
+  const serverKp = web3.Keypair.fromSecretKey(secret);
+  const wallet = new anchor.Wallet(serverKp);
   // Two-chain routing, exactly as er-smoke.ts: base devnet for setup, ER for trades.
-  const baseProvider = new anchor.AnchorProvider(
-    new anchor.web3.Connection(
-      process.env.PROVIDER_ENDPOINT || process.env.ANCHOR_PROVIDER_URL || "https://api.devnet.solana.com",
-      { commitment: "confirmed" },
-    ),
-    wallet,
+  const baseConn = new anchor.web3.Connection(
+    process.env.PROVIDER_ENDPOINT || process.env.ANCHOR_PROVIDER_URL || "https://api.devnet.solana.com",
+    { commitment: "confirmed" },
   );
-  const erProvider = new anchor.AnchorProvider(
-    new anchor.web3.Connection(process.env.EPHEMERAL_PROVIDER_ENDPOINT || "https://devnet.magicblock.app", {
-      wsEndpoint: process.env.EPHEMERAL_WS_ENDPOINT || "wss://devnet.magicblock.app",
-      commitment: "confirmed",
-    }),
-    wallet,
-  );
+  const erConn = new anchor.web3.Connection(process.env.EPHEMERAL_PROVIDER_ENDPOINT || "https://devnet.magicblock.app", {
+    wsEndpoint: process.env.EPHEMERAL_WS_ENDPOINT || "wss://devnet.magicblock.app",
+    commitment: "confirmed",
+  });
+  const baseProvider = new anchor.AnchorProvider(baseConn, wallet, { commitment: "confirmed" });
+  const erProvider = new anchor.AnchorProvider(erConn, wallet, { commitment: "confirmed" });
+  const program = new Program(idl, baseProvider);
   ctx = {
-    program: new Program(idl, baseProvider),
+    idl,
+    baseConn,
+    erConn,
+    serverKp,
+    program,
     programER: new Program(idl, erProvider),
-    signer: wallet.publicKey,
+    programId: program.programId,
     validator: new web3.PublicKey(process.env.VALIDATOR || "MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57"),
+    stm: new SessionTokenManager(wallet, baseConn),
   };
-  console.log(`[er] enabled — signer ${ctx.signer.toBase58().slice(0, 8)} program ${ctx.program.programId.toBase58().slice(0, 8)}`);
+  console.log(
+    `[er] enabled — server ${ctx.serverKp.publicKey.toBase58().slice(0, 8)} program ${ctx.programId.toBase58().slice(0, 8)} session ${ctx.stm.program.programId.toBase58().slice(0, 8)}`,
+  );
   return ctx;
 }
+
+/** Build a base+ER program pair that signs (and pays) as `kp` — used so the
+ *  per-run session key (not the server) is the fee payer/signer for that run. */
+function progsFor(kp: web3.Keypair): Progs {
+  const c = getCtx();
+  const w = new anchor.Wallet(kp);
+  return {
+    base: new Program(c.idl, new anchor.AnchorProvider(c.baseConn, w, { commitment: "confirmed" })),
+    er: new Program(c.idl, new anchor.AnchorProvider(c.erConn, w, { commitment: "confirmed" })),
+  };
+}
+
+// ── session authorizations (created at POST /runs, consumed at WS join) ───────
+interface SessionAuth {
+  signer: web3.Keypair; // server-held ephemeral session key
+  player: web3.PublicKey; // the real wallet a run is attributed to
+  tokenPda: web3.PublicKey; // gum SessionTokenV2 PDA
+  ready: boolean; // createSessionV2 confirmed on base
+}
+const sessionAuths = new Map<string, SessionAuth>();
+
+const short = (id: string) => id.slice(0, 8);
+
+/**
+ * Prepare a per-run session key: generate the ephemeral signer, build a
+ * `createSessionV2` tx that the PLAYER's wallet signs once (feePayer = player,
+ * topUp funds the session key), partial-signed by the session key here. The
+ * client wallet-signs + submits it, then calls markSessionReady().
+ * Returns null when ER is off or anything fails → caller uses the fallback path.
+ */
+export async function prepareSession(
+  runId: string,
+  ownerB58: string,
+): Promise<{ sessionSigner: string; sessionTokenPda: string; txB64: string } | null> {
+  if (!ER_ENABLED) return null;
+  try {
+    const c = getCtx();
+    const player = new web3.PublicKey(ownerB58);
+    const signer = web3.Keypair.generate();
+    const [tokenPda] = web3.PublicKey.findProgramAddressSync(
+      [
+        Buffer.from(SESSION_TOKEN_SEED),
+        c.programId.toBuffer(),
+        signer.publicKey.toBuffer(),
+        player.toBuffer(),
+      ],
+      c.stm.program.programId,
+    );
+
+    const validUntil = new BN(Math.floor(Date.now() / 1000) + SESSION_TTL_SECS);
+    const topUp = new BN(SESSION_TOPUP_LAMPORTS);
+    const tx: web3.Transaction = await c.stm.program.methods
+      .createSessionV2(true, validUntil, topUp)
+      .accounts({
+        targetProgram: c.programId,
+        sessionSigner: signer.publicKey,
+        feePayer: player,
+        authority: player,
+      })
+      .transaction();
+    const { blockhash } = await c.baseConn.getLatestBlockhash("confirmed");
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = player;
+    tx.partialSign(signer); // session key signs now; wallet signs client-side
+
+    sessionAuths.set(runId, { signer, player, tokenPda, ready: false });
+    console.log(`[session] ${short(runId)} prepared · player ${ownerB58.slice(0, 8)} signer ${signer.publicKey.toBase58().slice(0, 8)}`);
+    return {
+      sessionSigner: signer.publicKey.toBase58(),
+      sessionTokenPda: tokenPda.toBase58(),
+      txB64: tx.serialize({ requireAllSignatures: false }).toString("base64"),
+    };
+  } catch (e) {
+    console.error(`[session] ${short(runId)} prepare failed:`, (e as Error).message);
+    return null;
+  }
+}
+
+/** Mark a run's session ready once the player confirmed createSessionV2. We
+ *  re-check the token account actually landed on base before trusting it — if
+ *  not, the run silently falls back to server-signed. */
+export async function markSessionReady(runId: string): Promise<boolean> {
+  const auth = sessionAuths.get(runId);
+  if (!auth) return false;
+  try {
+    const c = getCtx();
+    const info = await c.baseConn.getAccountInfo(auth.tokenPda, "confirmed");
+    if (!info) {
+      console.error(`[session] ${short(runId)} ready check: token PDA ${auth.tokenPda.toBase58()} not found — will fall back`);
+      return false;
+    }
+    auth.ready = true;
+    console.log(`[session] ${short(runId)} ready · token ${auth.tokenPda.toBase58().slice(0, 8)}`);
+    return true;
+  } catch (e) {
+    console.error(`[session] ${short(runId)} ready check failed:`, (e as Error).message);
+    return false;
+  }
+}
+
+// ── ER lifecycle ─────────────────────────────────────────────────────────────
+//
+// Write path (B2): apply_event txns are SENT in order but NOT awaited for
+// confirmation — the devnet ER is fast and the txs land (score/last_tick
+// advance) even when web3.js throws a confirmation hiccup. Blocking the run on
+// each confirmation used to stall end_run by up to ~70s. Now:
+//   • applies → serial SEND (submission only), never confirmed, never blocking;
+//   • end_run → gated only on delegation (NOT on the apply sends), so it fires
+//     promptly, and it SETS the authoritative server score (reconciliation), so
+//     the finalized RunSession is correct regardless of how many applies landed.
+const STATUS_DEAD = 2;
 
 interface ErSession {
   runPDA: web3.PublicKey;
   tick: number;
-  // serial chain: start+delegate → applies (in order) → end_run. Errors are
-  // caught per-step so one failure doesn't break ordering or the run.
-  chain: Promise<void>;
+  ready: Promise<boolean>; // start+delegate done (true) or failed (false) — gates ER txs
+  sendChain: Promise<void>; // serial SEND of applies (no confirmation)
+  er: any; // ER program (provider wallet = payerKp) — builds ixs
+  payerKp: web3.Keypair; // signs ER txs raw (session key, or server key in fallback)
+  erConn: web3.Connection;
+  sessionToken: web3.PublicKey | null;
+  player: web3.PublicKey;
+  bh?: { value: string; at: number }; // cached ER blockhash (short TTL)
 }
 const sessions = new Map<string, ErSession>();
-const short = (id: string) => id.slice(0, 8);
 
-/** start_run + delegate the RunSession PDA to the ER. Call once at run start. */
+// ── finalized-run sink (leaderboard indexing) ────────────────────────────────
+// Additive notification: called only once a run is CONFIRMED finalized on base
+// (status Dead), with the authoritative on-chain values. Does not affect the ER
+// write path. index.ts registers a handler that writes to Redis.
+export interface FinalizedRun {
+  wallet: string;
+  score: number; // finalized on-chain RunSession.score
+  multiplierBps: number;
+  pda: string;
+  runId: string;
+  ts: number;
+}
+let finalizedHandler: ((r: FinalizedRun) => void) | null = null;
+export function setFinalizedHandler(fn: (r: FinalizedRun) => void): void {
+  finalizedHandler = fn;
+}
+
+/** Cached recent ER blockhash (refreshed ~every 12s) so non-blocking sends don't
+ *  pay a getLatestBlockhash round-trip per event. */
+async function blockhashFor(s: ErSession): Promise<string> {
+  const now = Date.now();
+  if (!s.bh || now - s.bh.at > 12_000) {
+    s.bh = { value: (await s.erConn.getLatestBlockhash("confirmed")).blockhash, at: now };
+  }
+  return s.bh.value;
+}
+
+/** Build, sign and SUBMIT an apply_event — without awaiting confirmation. */
+async function sendApply(s: ErSession, tick: number, points: number, multDeltaBps: number): Promise<void> {
+  const tx: web3.Transaction = await s.er.methods
+    .applyEvent(tick, new BN(points), multDeltaBps)
+    .accounts({ payer: s.payerKp.publicKey, run: s.runPDA, sessionToken: s.sessionToken })
+    .transaction();
+  tx.feePayer = s.payerKp.publicKey;
+  tx.recentBlockhash = await blockhashFor(s);
+  tx.sign(s.payerKp);
+  // Fire-and-forget: resolves once the ER accepts the tx for processing. We do
+  // NOT confirm — the truth is reconciled by end_run.
+  await s.erConn.sendRawTransaction(tx.serialize(), { skipPreflight: true, maxRetries: 3 });
+}
+
+/** start_run + delegate the RunSession PDA to the ER. Call once at run start.
+ *  Uses the per-run session key (player = wallet) when ready, else server key. */
 export function erStartRun(run: RunState): void {
   if (!ER_ENABLED) return;
   try {
     const c = getCtx();
+    const auth = sessionAuths.get(run.id);
+    const useSession = !!auth && auth.ready;
+    const payerKp = useSession ? auth!.signer : c.serverKp;
+    const player = useSession ? auth!.player : c.serverKp.publicKey;
+    const sessionToken = useSession ? auth!.tokenPda : null;
+    const progs = progsFor(payerKp);
+
     const seed = new BN(run.seed);
     const seedBuf = seed.toArrayLike(Buffer, "le", 8);
     const [runPDA] = web3.PublicKey.findProgramAddressSync(
-      [Buffer.from(RUN_SEED), c.signer.toBuffer(), seedBuf],
-      c.program.programId,
+      [Buffer.from(RUN_SEED), player.toBuffer(), seedBuf],
+      c.programId,
     );
-    const session: ErSession = { runPDA, tick: 0, chain: Promise.resolve() };
-    sessions.set(run.id, session);
-    session.chain = (async () => {
-      await c.program.methods
-        .startRun(seed, run.side, new BN(0))
-        .accounts({ run: runPDA, player: c.signer })
-        .rpc({ skipPreflight: true, commitment: "confirmed" });
-      await c.program.methods
-        .delegateRun(seed)
-        .accounts({ payer: c.signer, run: runPDA })
-        .remainingAccounts([{ pubkey: c.validator, isSigner: false, isWritable: false }])
-        .rpc({ skipPreflight: true, commitment: "confirmed" });
-      await new Promise((r) => setTimeout(r, 3000)); // let the ER pick up the delegation
-      console.log(`[er] ${short(run.id)} start+delegate done · PDA ${runPDA.toBase58()}`);
-    })().catch((e) => console.error(`[er] ${short(run.id)} start/delegate failed:`, (e as Error).message));
+
+    // Resolves true once start+delegate succeed (never rejects — false on failure).
+    const ready: Promise<boolean> = (async () => {
+      try {
+        await progs.base.methods
+          .startRun(seed, run.side, new BN(0))
+          .accounts({ run: runPDA, payer: payerKp.publicKey, player, sessionToken })
+          .rpc({ skipPreflight: true, commitment: "confirmed" });
+        await progs.base.methods
+          .delegateRun(seed)
+          .accounts({ payer: payerKp.publicKey, run: runPDA, sessionToken })
+          .remainingAccounts([{ pubkey: c.validator, isSigner: false, isWritable: false }])
+          .rpc({ skipPreflight: true, commitment: "confirmed" });
+        await new Promise((r) => setTimeout(r, 3000)); // let the ER pick up the delegation
+        console.log(
+          `[er] ${short(run.id)} start+delegate done (${useSession ? "session" : "server-fallback"}) · ` +
+            `player ${player.toBase58().slice(0, 8)} · PDA ${runPDA.toBase58()}`,
+        );
+        return true;
+      } catch (e) {
+        console.error(`[er] ${short(run.id)} start/delegate failed:`, (e as Error).message);
+        return false;
+      }
+    })();
+
+    sessions.set(run.id, {
+      runPDA,
+      tick: 0,
+      ready,
+      sendChain: ready.then(() => {}),
+      er: progs.er,
+      payerKp,
+      erConn: c.erConn,
+      sessionToken,
+      player,
+    });
   } catch (e) {
     console.error(`[er] ${short(run.id)} erStartRun error:`, (e as Error).message);
   }
 }
 
-/** Queue an apply_event to the ER (runs after delegation, in scoring order). */
+/** Submit an apply_event to the ER — ordered but non-blocking (no confirmation).
+ *  A genuine SEND failure is logged; it never stalls the run or end_run. */
 export function applyEventTx(run: RunState, points: number, multDeltaBps: number): void {
   if (!ER_ENABLED) return;
-  const session = sessions.get(run.id);
-  if (!session) return;
-  session.chain = session.chain
+  const s = sessions.get(run.id);
+  if (!s) return;
+  const tick = ++s.tick;
+  s.sendChain = s.sendChain
     .then(async () => {
-      const c = getCtx();
-      const tick = ++session.tick;
-      await c.programER.methods
-        .applyEvent(tick, new BN(points), multDeltaBps)
-        .accounts({ payer: c.signer, run: session.runPDA })
-        .rpc({ skipPreflight: true });
+      if (!(await s.ready)) return; // never delegated → nothing to write
+      await sendApply(s, tick, points, multDeltaBps);
     })
-    .catch((e) => console.error(`[er] ${short(run.id)} apply_event failed:`, (e as Error).message));
+    .catch((e) => console.error(`[er] ${short(run.id)} apply_event send failed (tick ${tick}): ${(e as Error).message}`));
 }
 
-/** end_run (commit + undelegate) after all applies, then read the finalized score.
- *  Returns immediately — finalization runs in the background so the death screen
- *  isn't delayed. */
+/** Finalize: send end_run setting the AUTHORITATIVE server score, then verify on
+ *  base (don't depend on the ER rpc confirmation — it can hiccup though the tx
+ *  lands). Resends once if the read-back doesn't show Dead. */
+async function finalizeRun(s: ErSession, runId: string, finalScore: BN, finalMultBps: number): Promise<void> {
+  const c = getCtx();
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const sig = await s.er.methods
+        .endRun(finalScore, finalMultBps)
+        .accounts({ payer: s.payerKp.publicKey, run: s.runPDA, sessionToken: s.sessionToken })
+        .rpc({ skipPreflight: true, commitment: "confirmed" });
+      console.log(`[er] ${short(runId)} end_run ${sig.slice(0, 8)} — commit+undelegate (score=${finalScore.toString()})`);
+      try {
+        await GetCommitmentSignature(sig, c.erConn);
+      } catch {
+        /* base read-back below is the real confirmation */
+      }
+    } catch (e) {
+      console.warn(`[er] ${short(runId)} end_run rpc hiccup (attempt ${attempt + 1}): ${(e as Error).message} — verifying on base`);
+    }
+    // Verify finalization on the BASE layer (status Dead = undelegated + final).
+    for (let i = 0; i < 6; i++) {
+      try {
+        const acct = (await c.program.account.runSession.fetch(s.runPDA, "confirmed")) as {
+          player: web3.PublicKey;
+          score: BN;
+          multiplierBps: number;
+          status: number;
+        };
+        if (acct.status === STATUS_DEAD) {
+          console.log(
+            `[er] ${short(runId)} FINALIZED on base · PDA ${s.runPDA.toBase58()} · ` +
+              `player=${acct.player.toBase58()} score=${acct.score.toString()} mult=${acct.multiplierBps} status=${acct.status}`,
+          );
+          // Index the finalized run for the leaderboard (authoritative on-chain values).
+          try {
+            finalizedHandler?.({
+              wallet: acct.player.toBase58(),
+              score: Number(acct.score.toString()),
+              multiplierBps: acct.multiplierBps,
+              pda: s.runPDA.toBase58(),
+              runId,
+              ts: Date.now(),
+            });
+          } catch (e) {
+            console.error(`[er] ${short(runId)} leaderboard index failed:`, (e as Error).message);
+          }
+          return;
+        }
+      } catch {
+        /* not propagated yet */
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+  console.error(`[er] ${short(runId)} could not finalize (PDA ${s.runPDA.toBase58()})`);
+}
+
+/** end_run (commit + undelegate). Gated ONLY on delegation — NOT on the apply
+ *  sends — so it finalizes promptly. Sets the authoritative server score so the
+ *  finalized RunSession is correct. Returns immediately; runs in the background. */
 export async function endRunTx(run: RunState): Promise<void> {
   if (!ER_ENABLED) return;
   const session = sessions.get(run.id);
   if (!session) return;
   sessions.delete(run.id); // no applies after end_run
-  session.chain
-    .then(async () => {
-      const c = getCtx();
-      const sig = await c.programER.methods
-        .endRun()
-        .accounts({ payer: c.signer, run: session.runPDA })
-        .rpc({ skipPreflight: true });
-      console.log(`[er] ${short(run.id)} end_run ${sig.slice(0, 8)} — commit+undelegate`);
-      // Await the base-layer commitment (proven step from er-smoke); best-effort.
-      try {
-        const erConn = (c.programER.provider as anchor.AnchorProvider).connection;
-        await GetCommitmentSignature(sig, erConn);
-      } catch {
-        /* the base read-back below is the real confirmation */
+  sessionAuths.delete(run.id); // session served its purpose
+  const finalScore = new BN(Math.max(0, Math.floor(run.score)));
+  const finalMult = Math.floor(run.multiplierBps);
+  session.ready
+    .then(async (ok) => {
+      if (!ok) {
+        console.error(`[er] ${short(run.id)} end_run skipped — run never delegated`);
+        return;
       }
-      // Confirm: re-read the finalized RunSession from the BASE layer.
-      for (let attempt = 0; attempt < 10; attempt++) {
-        try {
-          const acct = (await c.program.account.runSession.fetch(session.runPDA, "confirmed")) as {
-            score: BN;
-            multiplierBps: number;
-            lastTick: number;
-            status: number;
-          };
-          console.log(
-            `[er] ${short(run.id)} FINALIZED on base · PDA ${session.runPDA.toBase58()} · ` +
-              `score=${acct.score.toString()} mult=${acct.multiplierBps} lastTick=${acct.lastTick} status=${acct.status}`,
-          );
-          return;
-        } catch {
-          await new Promise((r) => setTimeout(r, 2000));
-        }
-      }
-      console.error(`[er] ${short(run.id)} could not read finalized RunSession (PDA ${session.runPDA.toBase58()})`);
+      await finalizeRun(session, run.id, finalScore, finalMult);
     })
     .catch((e) => console.error(`[er] ${short(run.id)} end_run failed:`, (e as Error).message));
 }

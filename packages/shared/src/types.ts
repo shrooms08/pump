@@ -108,12 +108,39 @@ export interface CreateRunRequest {
   stakeLamports: number;
 }
 
+/** Per-run session-key authorization (Phase B1). The client wallet-signs `txB64`
+ *  once to authorize the server-held `sessionSigner` for this run. Null/absent
+ *  when ER is off or session prep failed — the run falls back to server-signed. */
+export interface RunSessionAuth {
+  sessionSigner: string;
+  sessionTokenPda: string;
+  txB64: string;
+}
+
 /** POST /api/runs 200 response. Note `seed` is a decimal string (u64). */
 export interface CreateRunResponse {
   runId: RunId;
   seed: string;
   wsUrl: string;
   pool: string;
+  /** Present when a session key was prepared for this run (Phase B1). */
+  session?: RunSessionAuth | null;
+}
+
+/** A leaderboard row — one per player, ranked by best FINALIZED on-chain score. */
+export interface LeaderboardEntry {
+  rank: number; // 1-based
+  wallet: string; // base58
+  score: number; // finalized on-chain RunSession.score
+  multiplierBps: number;
+}
+
+/** GET /leaderboard response. `me` is the connected wallet's placement (even if
+ *  outside the returned top), or null if they have no finalized run yet. */
+export interface LeaderboardResponse {
+  top: LeaderboardEntry[];
+  me: LeaderboardEntry | null;
+  updatedAt: number;
 }
 
 /** GET /api/runs/:id response. */
@@ -124,20 +151,6 @@ export interface RunStateResponse {
   multiplierBps: number;
   positionPubkey: string | null;
   payoutLamports: number | null;
-}
-
-/** A single leaderboard row. */
-export interface LeaderboardEntry {
-  rank: number;
-  wallet: string;
-  handle: string | null;
-  score: number;
-  payoutLamports: number;
-}
-
-/** GET /api/leaderboard response. */
-export interface LeaderboardResponse {
-  entries: LeaderboardEntry[];
 }
 
 /** GET /api/users/:wallet response. */

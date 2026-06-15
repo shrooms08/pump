@@ -3,11 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
   GRAVITY,
-  FLAP_IMPULSE,
   TERMINAL_VY,
   BIRD_SPAWN_Y,
-  SCROLL_SPEED,
-  PHYS_DT,
   BIRD_X,
   CEIL,
   CANDLE_BODY_WIDTH,
@@ -39,6 +36,7 @@ const sx = (worldX: number, scrollX: number) => (worldX - scrollX) * S;
 const sy = (worldY: number) => H - worldY * S;
 
 const BIRD_SPRITE_R = (BIRD_RADIUS + 4) * S; // sprite slightly larger than hitbox
+const INTERP_DELAY = 45; // ms behind real-time so we interpolate between two known server samples
 
 // Diagnostics (temporary): prove exactly one render loop / input listener set
 // survives the Strict-Mode remount, and that the loop runs at ~60fps not ~120.
@@ -100,12 +98,18 @@ export function Game({ position, onExit, onRunEnd }: Props) {
   const stRef = useRef({
     seed: position.seed,
     sideNum,
-    flapVy: 0,
-    accum: 0,
     lastFrame: 0,
+    dyingVy: 0, // local velocity, death-fall animation only
     serverPnlBps: 0,
+    // authoritative samples — bird + scroll are rendered by interpolating these
+    // together, so the on-screen bird IS the bird the server collides with.
+    serverBirdY: BIRD_SPAWN_Y,
     serverScrollX: 0,
     serverTickAt: 0,
+    prevBirdY: BIRD_SPAWN_Y,
+    prevScrollX: 0,
+    prevTickAt: 0,
+    prevRenderY: BIRD_SPAWN_Y,
     scrollX: 0,
     birdY: BIRD_SPAWN_Y,
     angle: 0,
@@ -135,11 +139,15 @@ export function Game({ position, onExit, onRunEnd }: Props) {
       const m = JSON.parse(e.data) as ServerMessage;
       const st = stRef.current;
       if (m.t === "tick") {
-        // birdY from the server is authoritative for collision/death; the client
-        // predicts its own birdY purely (mirror), so we only consume price/scroll.
-        st.serverPnlBps = m.pnlBps;
+        // Buffer the last two authoritative samples (bird + scroll); the render
+        // loop interpolates between them so the drawn bird == the collision bird.
+        st.prevBirdY = st.serverBirdY;
+        st.prevScrollX = st.serverScrollX;
+        st.prevTickAt = st.serverTickAt || performance.now() - 33;
+        st.serverBirdY = m.birdY;
         st.serverScrollX = m.scrollX;
         st.serverTickAt = performance.now();
+        st.serverPnlBps = m.pnlBps;
         st.price = m.price;
         st.pnlBps = m.pnlBps;
       } else if (m.t === "state" || m.t === "event") {
@@ -161,9 +169,13 @@ export function Game({ position, onExit, onRunEnd }: Props) {
     if (st.dying) return;
     st.dying = true;
     st.alive = false;
+    // snap to the exact authoritative position the server died at (the last tick
+    // carried the colliding birdY) so the death lands ON the candle, not behind it.
+    st.birdY = st.serverBirdY;
+    st.scrollX = st.serverScrollX;
     st.shake = 16;
     st.flash = 1;
-    st.flapVy = 220;
+    st.dyingVy = 220; // small upward pop, then it arcs down
     playDeath();
     onRunEnd?.(); // real mode: time to close the real position
     const bx = BIRD_X * S;
@@ -203,7 +215,8 @@ export function Game({ position, onExit, onRunEnd }: Props) {
       if (now - lastFlap < 30) return; // dedupe pointer+touch double-fire
       lastFlap = now;
       if (!st.alive) return;
-      st.flapVy = FLAP_IMPULSE; // immediate local impulse, zero round-trip
+      // Authoritative bird: the server applies the flap and we render its result
+      // (no local impulse → the drawn bird can't disagree with collision).
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "tap", seq: st.seq++ }));
       playFlap();
@@ -286,29 +299,30 @@ export function Game({ position, onExit, onRunEnd }: Props) {
         fpsCount = 0;
       }
 
-      // CLASSIC FLAPPY physics — pure gravity + flap, the SAME fixed PHYS_DT
-      // integration the server runs on the SAME taps (deterministic mirror, no
-      // reconciliation). The price does NOT affect altitude — gravity wins, so
-      // the bird falls and dies if you stop tapping.
-      st.accum += dt;
-      while (st.accum >= PHYS_DT) {
-        st.flapVy = Math.max(TERMINAL_VY, st.flapVy + GRAVITY * PHYS_DT);
-        st.birdY += st.flapVy * PHYS_DT;
-        if (st.birdY > CEIL) {
-          st.birdY = CEIL; // cap at the top (no death)
-          if (st.flapVy > 0) st.flapVy = 0;
-        }
-        st.accum -= PHYS_DT;
-      }
-
-      // Horizontal scroll extrapolated from the latest authoritative tick (the
-      // candle chart scrolls in the background — obstacles only, not altitude).
+      // Render the AUTHORITATIVE bird: interpolate the bird AND scroll between the
+      // last two server ticks with the SAME alpha, so they stay locked to the
+      // exact frame the server collided on (what you see = what kills you). No
+      // independent client physics → the drawn bird can't drift from collision.
       if (st.alive) {
-        const ahead = Math.max(0, (now - st.serverTickAt) / 1000);
-        st.scrollX = st.serverScrollX + SCROLL_SPEED * ahead;
+        const span = st.serverTickAt - st.prevTickAt;
+        if (span > 0) {
+          const alpha = Math.max(0, Math.min(1.25, (now - INTERP_DELAY - st.prevTickAt) / span));
+          st.birdY = st.prevBirdY + (st.serverBirdY - st.prevBirdY) * alpha;
+          st.scrollX = st.prevScrollX + (st.serverScrollX - st.prevScrollX) * alpha;
+        } else {
+          st.birdY = st.serverBirdY;
+          st.scrollX = st.serverScrollX;
+        }
+      } else {
+        // run over — local cosmetic death-fall (the server's no longer ticking)
+        st.dyingVy = Math.max(TERMINAL_VY, st.dyingVy + GRAVITY * dt);
+        st.birdY += st.dyingVy * dt;
       }
 
-      const targetAngle = clamp(-st.flapVy / 1100, -0.5, 1.15);
+      // Bird rotation from its rendered vertical velocity (nose-up rising / dive falling).
+      const vy = (st.birdY - st.prevRenderY) / Math.max(dt, 1e-3);
+      st.prevRenderY = st.birdY;
+      const targetAngle = clamp(-vy / 1100, -0.5, 1.15);
       st.angle += (targetAngle - st.angle) * 0.2;
 
       st.trail.unshift({ x: BIRD_X * S, y: sy(st.birdY) });
