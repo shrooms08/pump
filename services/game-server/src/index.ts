@@ -38,12 +38,17 @@ import {
   setFinalizedHandler,
   type FinalizedRun,
 } from "./onchain.js";
+import { startRelay } from "@pump/price-relay";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://127.0.0.1:6379";
 const PORT = Number(process.env.PORT || 8787);
 const SYMBOL = process.env.PRICE_SYMBOL || "SOL-USDC";
 const WS_URL = process.env.GAME_WS_URL || `ws://localhost:${PORT}/ws`;
 const POOL = process.env.POOL || "devnet.1";
+// Render free tier = one web service (background workers are paid). With this set,
+// the game-server runs the price-relay in-process instead of as a 2nd service.
+// Unset (local pnpm dev) → relay runs as its own process, unchanged.
+const RUN_RELAY_INLINE = process.env.RUN_RELAY_INLINE === "true";
 const DT = 1 / SIM_HZ;
 const STATE_HEARTBEAT_MS = 500;
 
@@ -376,6 +381,14 @@ async function main() {
       /* ignore malformed tick */
     }
   });
+
+  // Single-service deploy (Render free tier): run the price-relay in this same
+  // process. Subscriber is already live above, so we won't miss its first ticks.
+  // Background + never fatal — startRelay({inline}) won't process.exit on us.
+  if (RUN_RELAY_INLINE) {
+    console.log("[game-server] RUN_RELAY_INLINE=true — starting price-relay in-process");
+    void startRelay({ inline: true }).catch((e) => console.error("[game-server] inline relay error:", (e as Error).message));
+  }
 
   const server = createServer(httpHandler);
   const wss = new WebSocketServer({ server, path: "/ws" });

@@ -97,6 +97,9 @@ importers:
       '@magicblock-labs/gum-sdk':
         specifier: ^3.0.10
         version: 3.0.10(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      '@pump/price-relay':
+        specifier: workspace:*
+        version: link:../price-relay
       '@pump/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -4942,7 +4945,7 @@ snapshots:
 
   isexe@2.0.0: {}
 
-  isomorphic-ws@4.0.1(ws@7.5.11):
+  isomorphic-ws@4.0.1(ws@7.5.11(bufferutil@4.1.0)(utf-8-validate@6.0.6)):
     dependencies:
       ws: 7.5.11(bufferutil@4.1.0)(utf-8-validate@6.0.6)
 
@@ -4955,7 +4958,7 @@ snapshots:
       delay: 5.0.0
       es6-promisify: 5.0.0
       eyes: 0.1.8
-      isomorphic-ws: 4.0.1(ws@7.5.11)
+      isomorphic-ws: 4.0.1(ws@7.5.11(bufferutil@4.1.0)(utf-8-validate@6.0.6))
       json-stringify-safe: 5.0.1
       stream-json: 1.9.1
       uuid: 8.3.2
