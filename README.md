@@ -1,6 +1,6 @@
 # PUMP
 
-**A trading app you play.** PUMP is a SOL trading terminal where you open a
+**A trading app made to make trading fun.** PUMP is a SOL trading terminal where you open a
 position and then *ride it* — the terminal's live candlestick chart zooms into a
 Flappy-Bird game played on your own candles, the bird's altitude is your live
 PnL, and the run's skill score is finalized on-chain in a **MagicBlock Ephemeral
