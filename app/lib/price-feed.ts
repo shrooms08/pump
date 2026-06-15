@@ -4,7 +4,7 @@
 // subscribe to ticks. Reconnects automatically (EventSource default behavior).
 "use client";
 
-const GAME_HTTP = process.env.NEXT_PUBLIC_GAME_HTTP || "http://localhost:8787";
+import { GAME_HTTP } from "./backend";
 
 export interface PriceTick {
   price: number;

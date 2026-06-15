@@ -2,8 +2,7 @@
 // it will be ridden as. No on-chain trade yet.
 import type { CreateRunResponse, RunSessionAuth, TradeSide } from "@pump/shared";
 import { Transaction, type Connection, type VersionedTransaction } from "@solana/web3.js";
-
-const GAME_HTTP = process.env.NEXT_PUBLIC_GAME_HTTP || "http://localhost:8787";
+import { GAME_HTTP } from "./backend";
 
 type SignTx = <T extends Transaction | VersionedTransaction>(tx: T) => Promise<T>;
 

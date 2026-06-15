@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/game/:path*",
+      "destination": "https://pump-game-server.onrender.com/:path*"
+    }
+  ]
+}
