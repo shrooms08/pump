@@ -338,6 +338,7 @@ function httpHandler(req: IncomingMessage, res: ServerResponse) {
   const readyMatch = req.method === "POST" ? url.pathname.match(/^\/runs\/([^/]+)\/session-ready$/) : null;
   if (readyMatch) {
     const runId = decodeURIComponent(readyMatch[1]!);
+    console.log(`[race] ${runId.slice(0, 8)} POST /session-ready received @${Date.now()}`);
     void (async () => {
       const ready = await markSessionReady(runId);
       res.writeHead(ready ? 200 : 202, { "content-type": "application/json" });

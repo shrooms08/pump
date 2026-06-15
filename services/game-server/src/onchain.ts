@@ -32,6 +32,11 @@ const RUN_SEED = "run";
 const SESSION_TOKEN_SEED = "session_token_v2";
 const SESSION_TTL_SECS = 3600; // session valid 1 hour — covers terminal → ride
 const SESSION_TOPUP_LAMPORTS = Math.floor(0.01 * web3.LAMPORTS_PER_SOL); // funds rent+fees for start_run PDA + delegate buffer
+// How long erStartRun waits for the player's session authorization to confirm
+// before falling back to the server key. Runs entirely in the background (the
+// game renders immediately on join), so this never freezes the screen — it only
+// delays the first on-chain write, which the spawn runway absorbs.
+const SESSION_WAIT_MS = 18_000;
 
 type Progs = { base: any; er: any };
 
@@ -117,8 +122,18 @@ interface SessionAuth {
   player: web3.PublicKey; // the real wallet a run is attributed to
   tokenPda: web3.PublicKey; // gum SessionTokenV2 PDA
   ready: boolean; // createSessionV2 confirmed on base
+  // Resolves true once markSessionReady confirms the token on base, false on a
+  // failed ready-check. erStartRun awaits this (with a timeout) so the signer
+  // decision waits for authorization instead of racing the WS join.
+  readyPromise: Promise<boolean>;
+  resolveReady: (ok: boolean) => void;
 }
 const sessionAuths = new Map<string, SessionAuth>();
+
+// DIAGNOSTIC (wrong-wallet race): records which signer each run locked in at
+// erStartRun time, so markSessionReady can tell whether the run already started
+// (server-fallback) before the session-ready confirmation landed.
+const runSignerLog = new Map<string, { useSession: boolean; at: number }>();
 
 const short = (id: string) => id.slice(0, 8);
 
@@ -164,7 +179,11 @@ export async function prepareSession(
     tx.feePayer = player;
     tx.partialSign(signer); // session key signs now; wallet signs client-side
 
-    sessionAuths.set(runId, { signer, player, tokenPda, ready: false });
+    let resolveReady!: (ok: boolean) => void;
+    const readyPromise = new Promise<boolean>((res) => {
+      resolveReady = res;
+    });
+    sessionAuths.set(runId, { signer, player, tokenPda, ready: false, readyPromise, resolveReady });
     console.log(`[session] ${short(runId)} prepared · player ${ownerB58.slice(0, 8)} signer ${signer.publicKey.toBase58().slice(0, 8)}`);
     return {
       sessionSigner: signer.publicKey.toBase58(),
@@ -183,18 +202,32 @@ export async function prepareSession(
 export async function markSessionReady(runId: string): Promise<boolean> {
   const auth = sessionAuths.get(runId);
   if (!auth) return false;
+  // (a)+(c) RACE PROBE: did erStartRun already pick a signer before this landed?
+  const started = runSignerLog.get(runId);
+  if (started) {
+    console.log(
+      `[race] ${short(runId)} session-ready @${Date.now()} — run ALREADY STARTED ` +
+        `${started.useSession ? "with SESSION" : "SERVER-FALLBACK"} ${Date.now() - started.at}ms earlier ` +
+        `${started.useSession ? "" : "→ TOO LATE: run is locked to the server key (player will be the server)"}`,
+    );
+  } else {
+    console.log(`[race] ${short(runId)} session-ready @${Date.now()} — run NOT started yet (good: erStartRun will use the session)`);
+  }
   try {
     const c = getCtx();
     const info = await c.baseConn.getAccountInfo(auth.tokenPda, "confirmed");
     if (!info) {
       console.error(`[session] ${short(runId)} ready check: token PDA ${auth.tokenPda.toBase58()} not found — will fall back`);
+      auth.resolveReady(false); // unblock erStartRun → server fallback
       return false;
     }
     auth.ready = true;
+    auth.resolveReady(true); // erStartRun (waiting) now proceeds with the session key
     console.log(`[session] ${short(runId)} ready · token ${auth.tokenPda.toBase58().slice(0, 8)}`);
     return true;
   } catch (e) {
     console.error(`[session] ${short(runId)} ready check failed:`, (e as Error).message);
+    auth.resolveReady(false); // unblock erStartRun → server fallback
     return false;
   }
 }
@@ -267,27 +300,74 @@ async function sendApply(s: ErSession, tick: number, points: number, multDeltaBp
 }
 
 /** start_run + delegate the RunSession PDA to the ER. Call once at run start.
- *  Uses the per-run session key (player = wallet) when ready, else server key. */
+ *  WAITS (in the background) for the player's session authorization to confirm
+ *  before choosing the signer + deriving the PDA, so once authorized the WHOLE
+ *  run (start→delegate→apply→end) signs with the session key and player = the
+ *  wallet. Falls back to the server key ONLY on genuine timeout/failure — it
+ *  never hangs the run, and gameplay renders immediately regardless (the wait is
+ *  background; the spawn runway absorbs it). */
 export function erStartRun(run: RunState): void {
   if (!ER_ENABLED) return;
   try {
     const c = getCtx();
     const auth = sessionAuths.get(run.id);
-    const useSession = !!auth && auth.ready;
-    const payerKp = useSession ? auth!.signer : c.serverKp;
-    const player = useSession ? auth!.player : c.serverKp.publicKey;
-    const sessionToken = useSession ? auth!.tokenPda : null;
-    const progs = progsFor(payerKp);
-
     const seed = new BN(run.seed);
     const seedBuf = seed.toArrayLike(Buffer, "le", 8);
-    const [runPDA] = web3.PublicKey.findProgramAddressSync(
-      [Buffer.from(RUN_SEED), player.toBuffer(), seedBuf],
-      c.programId,
-    );
+
+    // The session entry is created now (so apply_events can queue + advance tick),
+    // but the signer / PDA are FINALIZED inside `ready` once the authorization is
+    // resolved. Defaults are the server-fallback values; no ER tx uses them until
+    // `ready` resolves (apply/end both gate on it), by which point they're final.
+    const serverProgs = progsFor(c.serverKp);
+    const session: ErSession = {
+      runPDA: web3.PublicKey.findProgramAddressSync(
+        [Buffer.from(RUN_SEED), c.serverKp.publicKey.toBuffer(), seedBuf],
+        c.programId,
+      )[0],
+      tick: 0,
+      ready: Promise.resolve(false), // replaced just below
+      sendChain: Promise.resolve(),
+      er: serverProgs.er,
+      payerKp: c.serverKp,
+      erConn: c.erConn,
+      sessionToken: null,
+      player: c.serverKp.publicKey,
+    };
 
     // Resolves true once start+delegate succeed (never rejects — false on failure).
     const ready: Promise<boolean> = (async () => {
+      // Wait for the player's session authorization to confirm. Race it against a
+      // timeout so a never-arriving / failed session degrades to server-signed
+      // instead of hanging the run.
+      let useSession = false;
+      if (auth) {
+        useSession = await Promise.race([
+          auth.readyPromise,
+          new Promise<boolean>((r) => setTimeout(() => r(false), SESSION_WAIT_MS)),
+        ]);
+      }
+      // Finalize signer + PDA BEFORE any apply/end uses them.
+      const payerKp = useSession ? auth!.signer : c.serverKp;
+      const player = useSession ? auth!.player : c.serverKp.publicKey;
+      const sessionToken = useSession ? auth!.tokenPda : null;
+      const progs = useSession ? progsFor(payerKp) : serverProgs;
+      const [runPDA] = web3.PublicKey.findProgramAddressSync(
+        [Buffer.from(RUN_SEED), player.toBuffer(), seedBuf],
+        c.programId,
+      );
+      session.payerKp = payerKp;
+      session.player = player;
+      session.sessionToken = sessionToken;
+      session.er = progs.er;
+      session.runPDA = runPDA;
+
+      // (b) which signer this run locked in, after the race resolved.
+      runSignerLog.set(run.id, { useSession, at: Date.now() });
+      console.log(
+        `[race] ${short(run.id)} erStartRun decided @${Date.now()}: sessionAuth=${!!auth} ` +
+          `→ ${useSession ? `SESSION (player=${player.toBase58().slice(0, 8)})` : `SERVER-FALLBACK (player=server ${c.serverKp.publicKey.toBase58().slice(0, 8)})`}`,
+      );
+
       try {
         await progs.base.methods
           .startRun(seed, run.side, new BN(0))
@@ -310,17 +390,9 @@ export function erStartRun(run: RunState): void {
       }
     })();
 
-    sessions.set(run.id, {
-      runPDA,
-      tick: 0,
-      ready,
-      sendChain: ready.then(() => {}),
-      er: progs.er,
-      payerKp,
-      erConn: c.erConn,
-      sessionToken,
-      player,
-    });
+    session.ready = ready;
+    session.sendChain = ready.then(() => {});
+    sessions.set(run.id, session);
   } catch (e) {
     console.error(`[er] ${short(run.id)} erStartRun error:`, (e as Error).message);
   }
