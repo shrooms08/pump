@@ -38,7 +38,7 @@ the chart you traded becomes the level.
  ┌──────────────────────┐      ┌───────────────────────────┐     ┌────────────────────────────┐
  │ Next.js terminal +   │ taps │ Node WS loop:             │ ER  │ MagicBlock Ephemeral Rollup │
  │ canvas game          │─────▶│ re-simulates the run vs   │────▶│   RunSession PDA = the      │
- │ predictive rendering │ only │ the SAME seeded world,    │     │   canonical score            │
+ │ predictive rendering │ only │ the SAME seeded world,    │     │   canonical score           │
  │ sends intent, never  │◀─────│ computes the score,       │◀────│ Solana devnet (base layer)  │
  │ outcomes             │ state│ signs the ER writes       │     │   finalized RunSession      │
  └──────────────────────┘      └───────────────────────────┘     │ FlashTrade (price + perp)   │
